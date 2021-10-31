@@ -1,0 +1,16 @@
+build/*
+coordinator
+worker
+Makefile
+CMakeCache.txt
+cmake_install.cmake
+CMakeFiles
+.vscode/*
+gloo/*
+googletest/*
+libtorch/*
+src/*
+*.zip
+rendezvous_checkpoint*
+rendezvous_point*
+settings.json*
