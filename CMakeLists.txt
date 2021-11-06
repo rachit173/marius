@@ -1,6 +1,6 @@
 # Build instructions
 # 1. mkdir build && cd build
-# 2. Something like cmake -DCUDNN_INCLUDE_PATH=/usr/local/cuda/include -DCUDNN_LIBRARY_PATH=/usr/local/cuda/lib64 -DCMAKE_CXX_COMPILER=/usr/bin/g++-8  -DMARIUS_TORCH_DIR=/home/rtibrewal_wisc_edu/graph_learning/marius/comms/libtorch ..
+# 2. Something like cmake -DCUDNN_INCLUDE_PATH=/usr/local/cuda/include -DCUDNN_LIBRARY_PATH=/usr/local/cuda/lib64 -DCMAKE_CXX_COMPILER=/usr/bin/g++-8  -DMARIUS_TORCH_DIR=<path to libtorch> ..
 # 3. make -j4
 cmake_minimum_required(VERSION 3.12.2)
 set(CMAKE_CXX_STANDARD 17)
@@ -130,8 +130,8 @@ if (EXISTS ${project_TEST_DIR})
     add_subdirectory(${project_TEST_DIR})
 endif ()
 
-add_executable(marius_train ${project_TARGET_DIR}/marius.cpp)
-add_executable(marius_eval ${project_TARGET_DIR}/marius.cpp)
+add_executable(marius_train ${project_TARGET_DIR}/marius_main.cpp)
+add_executable(marius_eval ${project_TARGET_DIR}/marius_main.cpp)
 add_executable(coordinator ${project_TARGET_DIR}/coordinator.cpp)
 add_executable(worker ${project_TARGET_DIR}/worker.cpp)
 target_link_libraries(marius_train ${PROJECT_NAME})
