@@ -194,9 +194,9 @@ class Worker {
         }
         int part_idx = tensors[0].data_ptr<float>()[0];
         // send partition
-        std::vector<at::Tensor> tensors;
-        tensors.push_back(std::move(*node_map[part_idx]));
-        pg_->send();
+        // std::vector<at::Tensor> tensors;
+        // tensors.push_back(std::move(*node_map[part_idx]));
+        // pg_->send();
 
 
 
