@@ -123,6 +123,7 @@ class PartitionBufferStorage : public Storage {
 
     void shuffle() override;
 
+    // TODO(scaling): need to update index Read method
     torch::Tensor indexRead(int partition_id, Indices indices, int64_t access_id);
 
     void indexAdd(int partition_id, Indices indices, torch::Tensor values);

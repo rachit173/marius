@@ -8,6 +8,9 @@
 #include "batch.h"
 #include "datatypes.h"
 
+// TODO(scaling)
+// 1. Serialize/Deserialize for transport over network.
+// 2. Worker should be able to update the data_ptr_ and/or tensor_ by fetching from remote workers.
 class Partition {
 public:
     std::mutex *lock_;                                              /**< Mutex lock to prevent race conditions */
@@ -41,6 +44,10 @@ public:
     void indexAddAndDecrementUsage(Indices indices, torch::Tensor value);
 
     torch::Tensor indexRead(Indices indices);
+    // TODO(scaling)
+    torch::Tensor ConvertToTensor() { return torch::zeros({1}); }
+    // TODO(scaling)
+    static void ConvertToPartitionion(const torch::Tensor& tensor, Partition* out) {}
 
 };
 

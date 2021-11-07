@@ -20,6 +20,7 @@ DataSet::DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storag
     epochs_processed_ = 0;
     batches_processed_ = 0;
     batch_lock_ = new std::mutex();
+    batches_scaling_lock_ = new std::mutex();
     negative_lock_ = new std::mutex();
     storage_loaded_ = false;
 
@@ -68,6 +69,7 @@ DataSet::DataSet(Storage *train_edges, Storage *eval_edges, Storage *test_edges,
     epochs_processed_ = 0;
     batches_processed_ = 0;
     batch_lock_ = new std::mutex();
+    batches_scaling_lock_ = new std::mutex();
     negative_lock_ = new std::mutex();
     storage_loaded_ = false;
 
@@ -138,6 +140,7 @@ DataSet::DataSet(Storage *test_edges, Storage *embeddings, Storage *src_relation
     epochs_processed_ = 0;
     batches_processed_ = 0;
     batch_lock_ = new std::mutex();
+    batches_scaling_lock_ = new std::mutex();
     negative_lock_ = new std::mutex();
     storage_loaded_ = false;
 
@@ -173,6 +176,7 @@ DataSet::DataSet(Storage *test_edges, Storage *embeddings, Storage *src_relation
 DataSet::~DataSet() {
     clearBatches();
     delete batch_lock_;
+    delete batches_scaling_lock_;
     delete negative_lock_;
 
     if (marius_options.storage.embeddings == BackendType::PartitionBuffer && !train_) {
@@ -343,6 +347,39 @@ Batch *DataSet::getBatch() {
     return batch;
 }
 
+Batch *DataSet::getBatchScaling() {
+    Batch *batch = nextBatchScaling();
+    if (batch == nullptr) {
+        return batch;
+    }
+
+    SPDLOG_TRACE("Starting Batch. ID {}, Starting Index {}, Batch Size {} ", batch->batch_id_, batch->start_idx_, batch->batch_size_);
+    globalSample(batch);
+
+    batch->accumulateUniqueIndices();
+
+    if (!train_ && marius_options.evaluation.filtered_evaluation) {
+        setEvalFilter(batch);
+    }
+
+    loadCPUParameters(batch);
+
+    return batch;
+}
+
+// TODO(scaling): use batches_scaling_ queue and batches_scaling_ lock
+Batch *DataSet::nextBatchScaling() {
+    std::unique_lock batch_lock(*batches_scaling_lock_);
+    Batch *batch;
+    if (batch_iterator_ != batches_.end()) {
+        batch = *batch_iterator_;
+        batch_iterator_++;
+    } else {
+        return nullptr;
+    }
+    current_edge_ += batch->batch_size_;
+    return batch;
+}
 // TODO(scaling): Following funtion loads
 // a batch using the batch iterator
 // we want to modify the batch_iterator

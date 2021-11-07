@@ -56,7 +56,14 @@ void LoadEmbeddingsWorker::run() {
                 // Thus, the pipeline does not require much change
                 // as long as it can get the correct next batch from
                 // the call getBatch().
-                Batch *batch = pipeline_->data_set_->getBatch();
+                Batch* batch;
+                if (marius_options.communication.prefix == "") {
+                    batch = pipeline_->data_set_->getBatch();
+                } else {
+                    batch = pipeline_->data_set_->getBatchScaling();
+                }
+
+
                 if (batch == nullptr) {
                     break;
                 }

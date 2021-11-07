@@ -128,6 +128,9 @@ void PartitionedFile::readPartition(void* addr, Partition *partition) {
     partition->tensor_ = torch::from_blob(addr, {partition->partition_size_, embedding_size_}, dtype_);
 }
 
+// TODO(scaling): Incase the partition has been evicted from the buffer
+// i.e. partition->data_ptr_ == nullptr, the partition can be read from fd_ and still be transferred
+// over network.
 void PartitionedFile::writePartition(Partition *partition, bool clear_mem) {
     if (pwrite(fd_, partition->data_ptr_, partition->total_size_, partition->file_offset_) == -1) {
         SPDLOG_ERROR("Unable to write Block: {}\nError: {}", partition->partition_id_, errno);
@@ -482,6 +485,8 @@ void PartitionBuffer::admitIfNotPresent(int64_t access_id, Partition *partition)
     access_cv_.notify_all();
 }
 
+// TODO(scaling): The communication method should have access to the partition_table_
+// to be able update the partition buffer.
 // indices a relative to the global embedding structure
 torch::Tensor PartitionBuffer::indexRead(int partition_id, torch::Tensor indices, int64_t access_id) {
     Partition *partition = partition_table_[partition_id];
@@ -540,6 +545,8 @@ void PartitionBuffer::evict(Partition *partition) {
     free_list_.push(partition->buffer_idx_);
 }
 
+// TODO(scaling): admit method is used to add a node partition 
+// to the partition buffer.
 void PartitionBuffer::admit(Partition *partition) {
     // assumes that the buffer has been locked but not the partition
     int64_t buffer_idx;
