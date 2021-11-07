@@ -90,6 +90,7 @@ add_subdirectory(${project_THIRD_PARTY_DIR})
 set_property(TARGET spdlog PROPERTY POSITION_INDEPENDENT_CODE ON)
 include_directories(${project_INCLUDE_DIR})
 include_directories(${TORCH_INCLUDE_DIRS})
+include_directories(${GLOO_INCLUDE_DIRS})
 include_directories(${project_THIRD_PARTY_DIR}/inih)
 add_library(${PROJECT_NAME} SHARED ${project_SOURCES} ${project_HEADERS})
 
