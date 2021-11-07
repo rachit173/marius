@@ -5,11 +5,13 @@
 #include "config.h"
 
 #include <exception>
-#include <filesystem>
+#include <experimental/filesystem>
 #include <sstream>
 
 #include <cxxopts.hpp>
 #include <INIReader.h>
+
+namespace fs = std::experimental::filesystem;
 
 MariusOptions marius_options = MariusOptions();
 TimestampAllocator global_timestamp_allocator = TimestampAllocator();
@@ -398,8 +400,8 @@ MariusOptions parseConfig(int64_t argc, char *argv[]) {
         ("config_file", "Configuration file", cxxopts::value<std::string>())
         ("h, help", "Print help and exit.");
     string config_path = getConfigPath(argc, argv, cmd_options);
-    std::filesystem::path config_file_path = config_path;
-    if (!std::filesystem::exists(config_file_path)) {
+    fs::path config_file_path = config_path;
+    if (!fs::exists(config_file_path)) {
         SPDLOG_ERROR("Unable to find configuration file: {}", config_path);
         exit(1);
     }
