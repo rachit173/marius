@@ -39,7 +39,7 @@ endif()
 
 set(Torch_DIR ${MARIUS_TORCH_DIR}/share/cmake/Torch)
 set(Gloo_DIR ${MARUIS_GLOO_DIR}/share/cmake/Gloo)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS} ${GLOO_CXX_FLAGS}")
+set(CMAKE_CXX_FLAGS "-g ${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS} ${GLOO_CXX_FLAGS}")
 
 if(${USE_CUDA})
     add_definitions(-DMARIUS_CUDA=${USE_CUDA})
@@ -112,7 +112,7 @@ endif ()
 
 target_compile_options(${PROJECT_NAME}
         PRIVATE -fomit-frame-pointer
-        PRIVATE -O$<$<CONFIG:Debug>:0 -g3>$<$<CONFIG:Release>:3>
+        PRIVATE -O1
         )
 
 IF(CMAKE_BUILD_TYPE MATCHES Debug AND MARIUS_USE_ASAN)

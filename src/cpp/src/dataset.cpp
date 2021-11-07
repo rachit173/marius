@@ -6,6 +6,7 @@
 
 #include "ordering.h"
 
+#include<iostream>
 using std::get;
 using std::make_pair;
 using std::forward_as_tuple;
@@ -36,12 +37,23 @@ DataSet::DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storag
     initializeBatches();
     batch_iterator_ = batches_.begin();
     timestamp_ = global_timestamp_allocator.getTimestamp();
-
+    std::cout << "Initialize batches " << batches_.size() << std::endl;
+    for (auto batch: batches_) {
+        std::cout << "Batch id: " << batch->batch_id_ << ", ";
+        std::cout << "Batch size: " << batch->batch_size_ << ", ";
+        std::cout << "Start idx: " << batch->start_idx_ << ", ";
+        std::cout << "Src partition idx: " << ((PartitionBatch*)batch)->src_partition_idx_ << ", ";
+        std::cout << "Dst partition idx: " << ((PartitionBatch*)batch)->dst_partition_idx_ << ", ";
+        std::cout << std::endl;
+    }
     if (marius_options.storage.embeddings == BackendType::PartitionBuffer) {
         SPDLOG_DEBUG("Setup partition ordering");
         batches_ = ((PartitionBufferStorage *) node_embeddings_)->shuffleBeforeEvictions(batches_);
         batch_iterator_ = batches_.begin();
         SPDLOG_DEBUG("Batches shuffled");
+        // TODO(scaling):
+        // Need to remove set Ordering function
+        // to avoid static ordering
         ((PartitionBufferStorage *) node_embeddings_)->setOrdering(batches_);
         ((PartitionBufferStorage *) node_embeddings_optimizer_state_)->setOrdering(batches_);
         SPDLOG_DEBUG("Edge bucket ordering set");
@@ -179,6 +191,11 @@ void DataSet::initializeBatches() {
     if (marius_options.storage.embeddings == BackendType::PartitionBuffer && train_) {
         SPDLOG_DEBUG("Getting batches from partitions");
         edge_bucket_sizes_ = edges_->getEdgeBucketSizes();
+        std::cout << "Edge bucket sizes" << std::endl;
+        for (auto sz: edge_bucket_sizes_) {
+            std::cout << sz << ", ";
+        }
+        std::cout << std::endl;
         for (auto iter = edge_bucket_sizes_.begin(); iter != edge_bucket_sizes_.end(); iter++) {
             batch_size = *iter;
             PartitionBatch *curr_batch = new PartitionBatch(train_);
@@ -203,7 +220,14 @@ void DataSet::initializeBatches() {
         // Currently I am unsure how this would fit
         // into our model so it's better if we don't use it 
         // for now for multi node training.
-        splitBatches();
+        if (marius_options.communication.prefix == "") {
+            // Use splits when not using communication.
+            SPDLOG_INFO("Splitting batches");
+            splitBatches();
+        } else {
+            SPDLOG_INFO("Not splitting batches");
+        }
+
         SPDLOG_DEBUG("Split edge buckets into batches");
     } else {
         SPDLOG_DEBUG("Getting batches from edge list");
