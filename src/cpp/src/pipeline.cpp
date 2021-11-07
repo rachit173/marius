@@ -50,6 +50,12 @@ void LoadEmbeddingsWorker::run() {
                 lock.unlock();
 
                 *status_ = ThreadStatus::Running;
+                // TODO(scaling):
+                // The Load Embedding worker for both CPU and GPU
+                // get's the next batch using the following API.
+                // Thus, the pipeline does not require much change
+                // as long as it can get the correct next batch from
+                // the call getBatch().
                 Batch *batch = pipeline_->data_set_->getBatch();
                 if (batch == nullptr) {
                     break;

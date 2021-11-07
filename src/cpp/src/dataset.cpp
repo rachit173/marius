@@ -197,6 +197,12 @@ void DataSet::initializeBatches() {
         batches_ = batches;
         auto ordered_batches = applyOrdering(batches_);
         batches_ = ordered_batches;
+        // TODO(scaling): The split batches
+        // splits batches into smaller batches if 
+        // if their size is greater max_batch_size
+        // Currently I am unsure how this would fit
+        // into our model so it's better if we don't use it 
+        // for now for multi node training.
         splitBatches();
         SPDLOG_DEBUG("Split edge buckets into batches");
     } else {
@@ -292,6 +298,7 @@ void DataSet::clearBatches() {
     batches_ = std::vector<Batch *>();
 }
 
+// TODO(scaling): Change point.
 Batch *DataSet::getBatch() {
     Batch *batch = nextBatch();
     if (batch == nullptr) {
@@ -312,6 +319,10 @@ Batch *DataSet::getBatch() {
     return batch;
 }
 
+// TODO(scaling): Following funtion loads
+// a batch using the batch iterator
+// we want to modify the batch_iterator
+// to make it not be dependent on a vector
 Batch *DataSet::nextBatch() {
     std::unique_lock batch_lock(*batch_lock_);
     Batch *batch;
