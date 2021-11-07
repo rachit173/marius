@@ -4,7 +4,7 @@
 
 #include "io.h"
 
-#include <filesystem>
+#include <experimental/filesystem>
 
 #include "config.h"
 #include "logger.h"
@@ -20,6 +20,7 @@ using std::forward_as_tuple;
 using std::ios;
 using std::to_string;
 using std::cout;
+namespace fs = std::experimental::filesystem;
 
 void createDir(const string &path) {
 
@@ -161,13 +162,13 @@ tuple<Storage *, Storage *, Storage *> initializeEdges(bool train) {
 //                                       + PathConstants::edge_partition_offsets_file;
 
         if (marius_options.storage.remove_preprocessed) {
-            std::filesystem::rename(marius_options.path.train_edges_partitions, train_edges_partitions);
-//            std::filesystem::rename(marius_options.path.validation_edges_partitions, validation_edges_partitions);
-//            std::filesystem::rename(marius_options.path.test_edges_partitions, test_edges_partitions);
+            fs::rename(marius_options.path.train_edges_partitions, train_edges_partitions);
+//            fs::rename(marius_options.path.validation_edges_partitions, validation_edges_partitions);
+//            fs::rename(marius_options.path.test_edges_partitions, test_edges_partitions);
         } else {
-            std::filesystem::copy_file(marius_options.path.train_edges_partitions, train_edges_partitions, std::filesystem::copy_options::update_existing);
-//            std::filesystem::copy_file(marius_options.path.validation_edges_partitions, validation_edges_partitions);
-//            std::filesystem::copy_file(marius_options.path.test_edges_partitions, test_edges_partitions);
+            fs::copy_file(marius_options.path.train_edges_partitions, train_edges_partitions, fs::copy_options::update_existing);
+//            fs::copy_file(marius_options.path.validation_edges_partitions, validation_edges_partitions);
+//            fs::copy_file(marius_options.path.test_edges_partitions, test_edges_partitions);
         }
         train_edge_storage->readPartitionSizes(train_edges_partitions);
 //        valid_edge_storage->readPartitionSizes(validation_edges_partitions);
