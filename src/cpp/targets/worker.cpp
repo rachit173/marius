@@ -1,4 +1,11 @@
 #include "message.h"
+#include "config.h"
+#include "evaluator.h"
+#include "io.h"
+#include "logger.h"
+#include "model.h"
+#include "trainer.h"
+#include "util.h"
 
 #include <iostream>
 #include <vector>
@@ -7,6 +14,9 @@
 #include <thread>
 #include <shared_mutex>
 #include <mutex>
+#include <exception>
+#include <experimental/filesystem>
+
 
 #include <torch/torch.h>
 #include <c10d/FileStore.hpp>
@@ -32,9 +42,9 @@ typedef std::shared_lock<RwLock> ReadLock;
 // 2. Multiple process groups are needed, atleast one for 
 // metadata communication and one for bulk transfer.
 // 3. Interactions need to be transferred to coordinator.
-class Worker {
+class WorkerNode {
   public:
-    explicit Worker(
+    explicit WorkerNode(
       std::shared_ptr<c10d::ProcessGroupGloo> pg,
       int rank,
       int capacity,
@@ -63,7 +73,7 @@ class Worker {
         this->DispatchPartitionsToCoordinator();
       }));
       threads_.emplace_back(std::thread([&](){
-        this->TransferPartitionsToWorkers();
+        this->TransferPartitionsToWorkerNodes();
       }));
       threads_.emplace_back(std::thread([&](){
         this->ProcessPartitions();
@@ -74,7 +84,7 @@ class Worker {
     }
     void stop_working() {}
   private:
-    Partition RequestPartition() {
+    PartitionMetadata RequestPartition() {
       torch::Tensor tensor = torch::zeros({1}) + 1; // command is 1 for request partition.
       std::vector<at::Tensor> tensors({tensor});
       auto send_work = pg_->send(tensors, coordinator_rank_, 0);
@@ -90,7 +100,7 @@ class Worker {
         recv_work->wait();
       }
       std::cout << "Received " << part_tensor_vec[0] << std::endl;
-      return Partition::ConvertToPartition(part_tensor_vec[0]);
+      return PartitionMetadata::ConvertToPartition(part_tensor_vec[0]);
     }
     void RequestPartitions() {
       while (1) {
@@ -102,7 +112,7 @@ class Worker {
         }
         while (size < capacity_) {
           std::cout << size << " " << capacity_ << std::endl;
-          Partition p = RequestPartition();
+          PartitionMetadata p = RequestPartition();
           std::cout << "Received partition: " << p.idx << " " << p.src << std::endl;
           {
             WriteLock w_lock(transfer_receive_parts_rw_mutex_);
@@ -113,7 +123,7 @@ class Worker {
         std::this_thread::sleep_for(std::chrono::microseconds(sleep_time_)); // TODO(rrt): reduce this later;
       }
     }
-    bool sendPartition(const Partition& part, int dstRank) {
+    bool sendPartition(const PartitionMetadata& part, int dstRank) {
       torch::Tensor tensor = part.ConvertToTensor();
       std::cout << "tensor to send " << tensor << std::endl;
       std::vector<at::Tensor> tensors({tensor});
@@ -130,7 +140,7 @@ class Worker {
         while (1) {
           WriteLock w_lock(dispatch_parts_rw_mutex_);
           if (dispatch_parts_.empty()) break;
-          Partition part = dispatch_parts_.front();
+          PartitionMetadata part = dispatch_parts_.front();
           dispatch_parts_.pop();
           sendPartition(part, coordinator_rank_);      
         }
@@ -143,13 +153,13 @@ class Worker {
       // For now just generate a random embedding vector.
       node_map[part_num] = std::make_shared<torch::Tensor>(torch::randn({partition_size_, embedding_dims_}));
     }
-    void TransferPartitionsFromWorkers() {
+    void TransferPartitionsFromWorkerNodes() {
       while (1) {
         {
           while (1) {
             WriteLock w_lock(transfer_receive_parts_rw_mutex_);
             if (transfer_receive_parts_.empty()) break;
-            Partition part  = transfer_receive_parts_.front();
+            PartitionMetadata part  = transfer_receive_parts_.front();
             if (part.src == -1) {
               // Needs to fetch it from current storage 
               fetchFromStorage(part.idx);
@@ -179,7 +189,7 @@ class Worker {
         
       }
     }
-    void TransferPartitionsToWorkers() {
+    void TransferPartitionsToWorkerNodes() {
       // Receive the request and transfer the partition from the node map
       while (1) {
         int tag = 1;
@@ -216,11 +226,11 @@ class Worker {
   int coordinator_rank_;
   int sleep_time_;
   mutable std::shared_mutex avail_parts_rw_mutex_;
-  std::vector<Partition> avail_parts_;
+  std::vector<PartitionMetadata> avail_parts_;
   mutable std::shared_mutex dispatch_parts_rw_mutex_;
-  std::queue<Partition> dispatch_parts_;
+  std::queue<PartitionMetadata> dispatch_parts_;
   mutable std::shared_mutex transfer_receive_parts_rw_mutex_;
-  std::queue<Partition> transfer_receive_parts_;
+  std::queue<PartitionMetadata> transfer_receive_parts_;
   std::vector<std::thread> threads_;
   mutable std::shared_mutex node_map_rw_mutex_;
   std::vector<std::shared_ptr<torch::Tensor>> node_map;
@@ -251,32 +261,7 @@ int main(int argc, char* argv[]) {
     prefixstore, rank, world_size, options);
   int num_partitions = 8;
   int capacity = 4;
-  Worker worker(pg, rank, capacity, num_partitions, world_size-1);
+  WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1);
   worker.start_working();
   worker.stop_working();
-  // if (rank == 1) {
-  //   std::cout << "Receiving" << std::endl;
-  //   torch::Tensor tensor = torch::zeros({2, 3});
-  //   std::vector<at::Tensor> tensors({tensor});
-  //   int srcRank = -1;
-  //   int tag = 0;
-  //   auto recv_work = pg->recvAnysource(tensors, tag);
-  //   if (recv_work) {
-  //     recv_work->wait();
-  //     srcRank = recv_work->sourceRank();
-  //   }
-  //   std::cout << "Received from " << srcRank << std::endl;
-  //   for (auto tensor : tensors) {
-  //     std::cout << tensor << ", " << std::endl;
-  //   }
-  //   std::cout << std::endl;
-  // } else {
-  //   std::cout << "Sending" << std::endl;
-  //   torch::Tensor tensor = torch::rand({2, 3});
-  //   std::vector<at::Tensor> tensors({tensor});
-  //   int dstRank = 1;
-  //   int tag = 0;
-  //   auto work = pg->send(tensors, dstRank, tag);
-  //   if (work) work->wait();
-  // }
 }

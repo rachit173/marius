@@ -19,8 +19,8 @@
 // using gloo::transport::tcp::UnboundBuffer;
 
 // class Coordinator {
-//   struct Partition {
-//     Partition(int i): idx(i) {}
+//   struct PartitionMetadata {
+//     PartitionMetadata(int i): idx(i) {}
 //     int idx;
 //   };
 //   public:
@@ -66,7 +66,7 @@
 //     int num_partitions_;
 //     int num_machines_;
 //     std::shared_ptr<gloo::rendezvous::Context> rendezvous_context_;
-//     std::vector<Partition> available_partitions_;
+//     std::vector<PartitionMetadata> available_partitions_;
 // };
 
 // // Communication Protocol
@@ -214,7 +214,7 @@ class Coordinator {
     num_workers_(num_workers) {
       // setup
       for (int i = 0; i < num_partitions_; i++) {
-        available_partitions_.push_back(Partition(i));
+        available_partitions_.push_back(PartitionMetadata(i));
       }
     }
     void start_working() {
@@ -235,7 +235,7 @@ class Coordinator {
         command = tensors[0].data_ptr<float>()[0];
         std::cout << "Command: " << command << std::endl;
         if (command == 1) {
-          Partition part = PartitionRequest(srcRank);
+          PartitionMetadata part = PartitionRequest(srcRank);
           if (part.idx != -1) sendPartition(part, srcRank);
         } else if (command == 2) {
           PartitionReceive(srcRank);
@@ -250,7 +250,7 @@ class Coordinator {
 
     }
   private:
-    bool sendPartition(const Partition& part, int dstRank) {
+    bool sendPartition(const PartitionMetadata& part, int dstRank) {
       torch::Tensor tensor = part.ConvertToTensor();
       std::cout << "tensor to send " << tensor << std::endl;
       std::vector<at::Tensor> tensors({tensor});
@@ -262,12 +262,12 @@ class Coordinator {
       }
       return true;
     }
-    Partition PartitionRequest(int srcRank) {
+    PartitionMetadata PartitionRequest(int srcRank) {
       if (available_partitions_.empty()) {
         std::cout << "No part available" << std::endl;
-        return Partition(-1);
+        return PartitionMetadata(-1);
       }
-      Partition part = available_partitions_.back();
+      PartitionMetadata part = available_partitions_.back();
       available_partitions_.pop_back();
       return part;
     }
@@ -280,7 +280,7 @@ class Coordinator {
   std::shared_ptr<c10d::ProcessGroupGloo> pg_;
   int num_partitions_;
   int num_workers_;
-  std::vector<Partition> available_partitions_;
+  std::vector<PartitionMetadata> available_partitions_;
 };
 
 
