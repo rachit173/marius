@@ -240,7 +240,7 @@ class WorkerNode {
 
 
 int main(int argc, char* argv[]) {
-  auto marius_options = parseConfig(argc, argv);
+  marius_options = parseConfig(argc, argv); // marius options is an extern variable form config.h that is globally used across the library.
   int rank = marius_options.communication.rank;
   int world_size = marius_options.communication.world_size;
   std::string prefix = marius_options.communication.prefix;
@@ -258,6 +258,98 @@ int main(int argc, char* argv[]) {
   int num_partitions = 8;
   int capacity = 4;
   WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1);
+  std::string log_file = marius_options.general.experiment_name;
+  MariusLogger marius_logger = MariusLogger(log_file);
+  spdlog::set_default_logger(marius_logger.main_logger_);
+  marius_logger.setConsoleLogLevel(marius_options.reporting.log_level);
+  bool gpu = false;
+  if (marius_options.general.device == torch::kCUDA) {
+      gpu = true;
+  }
+  Timer preprocessing_timer = Timer(gpu);
+  preprocessing_timer.start();
+  SPDLOG_INFO("Start preprocessing");
+
+  DataSet *train_set;
+  DataSet *eval_set;
+
+  Model *model = initializeModel(marius_options.model.encoder_model, marius_options.model.decoder_model);
+
+  bool train = true;
+
+  if (train) {
+      tuple<Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *> storage_ptrs = initializeTrain();
+      Storage *train_edges = get<0>(storage_ptrs);
+      Storage *eval_edges = get<1>(storage_ptrs);
+      Storage *test_edges = get<2>(storage_ptrs);
+
+      Storage *embeddings = get<3>(storage_ptrs);
+      Storage *emb_state = get<4>(storage_ptrs);
+
+      Storage *src_rel = get<5>(storage_ptrs);
+      Storage *src_rel_state = get<6>(storage_ptrs);
+      Storage *dst_rel = get<7>(storage_ptrs);
+      Storage *dst_rel_state = get<8>(storage_ptrs);
+
+      bool will_evaluate = !(marius_options.path.validation_edges.empty() && marius_options.path.test_edges.empty());
+
+      train_set = new DataSet(train_edges, embeddings, emb_state, src_rel, src_rel_state, dst_rel, dst_rel_state);
+      SPDLOG_INFO("Training set initialized");
+      if (will_evaluate) {
+          eval_set = new DataSet(train_edges, eval_edges, test_edges, embeddings, src_rel, dst_rel);
+          SPDLOG_INFO("Evaluation set initialized");
+      }
+
+      preprocessing_timer.stop();
+      int64_t preprocessing_time = preprocessing_timer.getDuration();
+
+      SPDLOG_INFO("Preprocessing Complete: {}s", (double) preprocessing_time / 1000);
+
+      Trainer *trainer;
+      Evaluator *evaluator;
+
+      if (marius_options.training.synchronous) {
+          trainer = new SynchronousTrainer(train_set, model);
+      } else {
+          trainer = new PipelineTrainer(train_set, model);
+      }
+
+      if (will_evaluate) {
+          if (marius_options.evaluation.synchronous) {
+              evaluator = new SynchronousEvaluator(eval_set, model);
+          } else {
+              evaluator = new PipelineEvaluator(eval_set, model);
+          }
+      }
+
+      for (int epoch = 0; epoch < marius_options.training.num_epochs; epoch += marius_options.evaluation.epochs_per_eval) {
+          int num_epochs = marius_options.evaluation.epochs_per_eval;
+          if (marius_options.training.num_epochs < num_epochs) {
+              num_epochs = marius_options.training.num_epochs;
+              trainer->train(num_epochs);
+          } else {
+              trainer->train(num_epochs);
+              if (will_evaluate) {
+                  evaluator->evaluate(epoch + marius_options.evaluation.epochs_per_eval < marius_options.training.num_epochs);
+              }
+          }
+      }
+      embeddings->unload(true);
+      src_rel->unload(true);
+      dst_rel->unload(true);
+
+
+      // garbage collect
+      delete trainer;
+      delete train_set;
+      if (will_evaluate) {
+          delete evaluator;
+          delete eval_set;
+      }
+
+      freeTrainStorage(train_edges, eval_edges, test_edges, embeddings, emb_state, src_rel, src_rel_state, dst_rel, dst_rel_state);
+
+  }
   worker.start_working();
   worker.stop_working();
 }
