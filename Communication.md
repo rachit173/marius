@@ -1,3 +1,10 @@
+For development purpose we can use examples/training/configs/fb15k_gpu.ini,
+
+For preparing dataset. 
+1. mkdir <marius_root_dir>/output_dir/
+2. cd output_dir && curl -O https://dl.fbaipublicfiles.com/starspace/fb15k.tgz
+3. cd <marius_root_dir> && marius_preprocess output_dir/ --dataset fb15k
+
 In the build directory, 
 
 For running workers,
