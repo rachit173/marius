@@ -2,7 +2,7 @@
 # 1. mkdir build && cd build
 # 2. Something like cmake -DCUDNN_INCLUDE_PATH=/usr/local/cuda/include -DCUDNN_LIBRARY_PATH=/usr/local/cuda/lib64 -DCMAKE_CXX_COMPILER=/usr/bin/g++-8  -DMARIUS_TORCH_DIR=<path to libtorch> ..
 # 3. make -j4
-cmake_minimum_required(VERSION 3.12.2)
+cmake_minimum_required(VERSION 3.12.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 cmake_policy(SET CMP0048 NEW)
@@ -17,8 +17,8 @@ if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
     endif()
     set(CLANG TRUE)
 elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")
-    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 8.0)
-        message(FATAL_ERROR "GCC version must be at least 8.0!")
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 7.5)
+        message(FATAL_ERROR "GCC version must be at least 7.5!")
     endif()
     set(GCC TRUE)
 else ()
