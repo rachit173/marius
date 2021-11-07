@@ -109,11 +109,11 @@ int main(int argc, char* argv[]) {
   int rank = marius_options.communication.rank;
   int world_size = marius_options.communication.world_size;
   std::string prefix = marius_options.communication.prefix;
-  torch::Tensor tensor = torch::rand({2, 3});
-  std::cout << tensor << std::endl;
+  std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
+
   auto filestore = c10::make_intrusive<c10d::FileStore>("./rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
-  // auto dev = c10d::GlooDeviceFactory::makeDeviceForInterface("lo");
+
   std::chrono::milliseconds timeout(100000);
   auto options = c10d::ProcessGroupGloo::Options::create();
   options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
@@ -125,29 +125,4 @@ int main(int argc, char* argv[]) {
   Coordinator coordinator(pg, num_partitions, world_size-1);
   coordinator.start_working();
   coordinator.stop_working();
-  // if (rank == 1) {
-  //   std::cout << "Receiving" << std::endl;
-  //   torch::Tensor tensor = torch::zeros({2, 3});
-  //   std::vector<at::Tensor> tensors({tensor});
-  //   int srcRank = -1;
-  //   int tag = 0;
-  //   auto recv_work = pg->recvAnysource(tensors, tag);
-  //   if (recv_work) {
-  //     recv_work->wait();
-  //     srcRank = recv_work->sourceRank();
-  //   }
-  //   std::cout << "Received from " << srcRank << std::endl;
-  //   for (auto tensor : tensors) {
-  //     std::cout << tensor << ", " << std::endl;
-  //   }
-  //   std::cout << std::endl;
-  // } else {
-  //   std::cout << "Sending" << std::endl;
-  //   torch::Tensor tensor = torch::rand({2, 3});
-  //   std::vector<at::Tensor> tensors({tensor});
-  //   int dstRa-nk = 1;
-  //   int tag = 0;
-  //   auto work = pg->send(tensors, dstRank, tag);
-  //   if (work) work->wait();
-  // }
 }
