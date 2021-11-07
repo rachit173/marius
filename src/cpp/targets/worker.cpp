@@ -29,7 +29,7 @@
 typedef std::shared_mutex RwLock;
 typedef std::unique_lock<RwLock> WriteLock;
 typedef std::shared_lock<RwLock> ReadLock;
-
+namespace fs = std::experimental::filesystem;
 
 
 ///
@@ -240,15 +240,11 @@ class WorkerNode {
 
 
 int main(int argc, char* argv[]) {
-  if (argc < 4) {
-    std::cerr << "The command should be run as ./a.aout <prefix> <rank> <size>" << std::endl;
-    return 0;
-  }
-  std::string prefix(argv[1]);
-  const int rank = atoi(argv[2]);
-  const int world_size = atoi(argv[3]);
-  torch::Tensor tensor = torch::rand({2, 3});
-  std::cout << tensor << std::endl;
+  auto marius_options = parseConfig(argc, argv);
+  int rank = marius_options.communication.rank;
+  int world_size = marius_options.communication.world_size;
+  std::string prefix = marius_options.communication.prefix;
+  std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
   auto filestore = c10::make_intrusive<c10d::FileStore>("./rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
   // auto dev = c10d::GlooDeviceFactory::makeDeviceForInterface("lo");

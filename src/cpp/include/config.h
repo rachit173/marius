@@ -182,6 +182,12 @@ struct PathOptions {
     string experiment_directory;
 };
 
+struct CommunicationOptions {
+    int rank;
+    int world_size;
+    string prefix;
+};
+
 struct ReportingOptions {
     int logs_per_epoch;
     spdlog::level::level_enum log_level;
@@ -198,6 +204,7 @@ struct MariusOptions {
     EvaluationPipelineOptions evaluation_pipeline{};
     PathOptions path{};
     ReportingOptions reporting{};
+    CommunicationOptions communication{};
 };
 
 MariusOptions parseConfig(int64_t argc, char *argv[]);

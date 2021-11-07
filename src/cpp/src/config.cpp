@@ -236,6 +236,11 @@ MariusOptions parseConfig(int64_t argc, char *argv[]) {
     bool prefetching; // Whether to prefetch partitions or not
     bool conserve_memory; // Will try to conserve memory at the cost of extra IO for some configurations
 
+    // Communication options
+    string prefix;
+    int rank;
+    int world_size;
+
     s_var_map.push_back((OptInfo<std::string>){&s_edges_backend, "HostMemory", "storage", "edges_backend"});
     b_var_map.push_back((OptInfo<bool>){&reinit_edges, true, "storage", "reinit_edges"});
     b_var_map.push_back((OptInfo<bool>){&remove_preprocessed, false, "storage", "remove_preprocessed"});
@@ -246,7 +251,10 @@ MariusOptions parseConfig(int64_t argc, char *argv[]) {
     s_var_map.push_back((OptInfo<std::string>){&s_relations_backend, "HostMemory", "storage", "relations_backend"});
     s_var_map.push_back((OptInfo<std::string>){&s_embeddings_dtype, "float32", "storage", "embeddings_dtype"});
     s_var_map.push_back((OptInfo<std::string>){&s_edge_bucket_ordering, "Elimination", "storage", "edge_bucket_ordering"});
+    s_var_map.push_back((OptInfo<std::string>){&prefix, "ABC", "communication", "prefix"});
     i_var_map.push_back((OptInfo<int>){&num_partitions, 1, "storage", "num_partitions", {1, INT32_MAX}});
+    i_var_map.push_back((OptInfo<int>){&rank, 0, "communication", "rank", {0, INT32_MAX}});
+    i_var_map.push_back((OptInfo<int>){&world_size, 0, "communication", "world_size", {0, INT32_MAX}});
     i_var_map.push_back((OptInfo<int>){&buffer_capacity, 2, "storage", "buffer_capacity", {2, INT32_MAX}});
     b_var_map.push_back((OptInfo<bool>){&prefetching, true, "storage", "prefetching"});
     b_var_map.push_back((OptInfo<bool>){&conserve_memory, false, "storage", "conserve_memory"});
@@ -669,6 +677,12 @@ MariusOptions parseConfig(int64_t argc, char *argv[]) {
         conserve_memory
     };
 
+    CommunicationOptions communication_options = {
+        rank, 
+        world_size,
+        prefix
+    };
+
     TrainingOptions training_options = {
         training_batch_size,
         training_num_chunks,
@@ -758,7 +772,8 @@ MariusOptions parseConfig(int64_t argc, char *argv[]) {
         evaluation_options,
         evaluation_pipeline_options,
         path_options,
-        reporting_options
+        reporting_options,
+        communication_options
     };
 
     return options;

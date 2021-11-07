@@ -1,8 +1,17 @@
 #include "message.h"
+#include "config.h"
+#include "evaluator.h"
+#include "io.h"
+#include "logger.h"
+#include "model.h"
+#include "trainer.h"
+#include "util.h"
 
 #include <iostream>
 #include <vector>
 #include <memory>
+#include <exception>
+#include <experimental/filesystem>
 
 #include <torch/torch.h>
 #include <c10d/FileStore.hpp>
@@ -11,6 +20,7 @@
 #include <c10d/ProcessGroupGloo.hpp>
 #include <c10d/GlooDeviceFactory.hpp>
 #include <c10d/frontend.hpp>
+namespace fs = std::experimental::filesystem;
 
 class Coordinator {
   public:
@@ -95,13 +105,10 @@ class Coordinator {
 
 
 int main(int argc, char* argv[]) {
-  if (argc < 4) {
-    std::cerr << "The command should be run as ./a.aout <prefix> <rank> <size>" << std::endl;
-    return 0;
-  }
-  std::string prefix(argv[1]);
-  const int rank = atoi(argv[2]);
-  const int world_size = atoi(argv[3]);
+  auto marius_options = parseConfig(argc, argv);
+  int rank = marius_options.communication.rank;
+  int world_size = marius_options.communication.world_size;
+  std::string prefix = marius_options.communication.prefix;
   torch::Tensor tensor = torch::rand({2, 3});
   std::cout << tensor << std::endl;
   auto filestore = c10::make_intrusive<c10d::FileStore>("./rendezvous_checkpoint", 1);
