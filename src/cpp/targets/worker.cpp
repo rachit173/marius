@@ -61,7 +61,19 @@ class WorkerNode {
       int partition_size_ = 10;
       int embedding_dims_ = 12;
     }
-    void start_working() {
+    void start_working(DataSet* trainset, DataSet* evalset, 
+                        Trainer* trainer, Evaluator* evaluator, 
+                        PartitionBufferStorage* embeds,             // Require the storage for node embeddings to be PartitionBufferStorage
+                        PartitionBufferStorage* embeds_state) {
+      {
+        // Set the private parameters.
+        trainset_ = trainset;  // Dataset containing the batches queue
+        evalset_ = evalset;
+        trainer_ = trainer;     // Trainer container 
+        evaluator_ = evaluator;
+        embeds_ = embeds;
+        embeds_state_ = embeds_state;
+      }
       // Need 
       // 1. Request partitions when below capacity.
       // 2. Dispath partitions
@@ -215,6 +227,9 @@ class WorkerNode {
       }
     }
     void ProcessPartitions() {
+      int num_epochs = 1;
+      trainer_->train(num_epochs);
+      // TODO(scaling): Add evaluation code.
 
     }
   private:
@@ -236,6 +251,12 @@ class WorkerNode {
   std::vector<std::shared_ptr<torch::Tensor>> node_map;
   int partition_size_;
   int embedding_dims_;
+  DataSet* trainset_;
+  DataSet* evalset_;
+  Trainer* trainer_;
+  Evaluator* evaluator_;
+  PartitionBufferStorage* embeds_;
+  PartitionBufferStorage* embeds_state_;
 };
 
 
@@ -275,81 +296,69 @@ int main(int argc, char* argv[]) {
 
   Model *model = initializeModel(marius_options.model.encoder_model, marius_options.model.decoder_model);
 
-  bool train = true;
+  tuple<Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *> storage_ptrs = initializeTrain();
+  Storage *train_edges = get<0>(storage_ptrs);
+  Storage *eval_edges = get<1>(storage_ptrs);
+  Storage *test_edges = get<2>(storage_ptrs);
 
-  if (train) {
-      tuple<Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *> storage_ptrs = initializeTrain();
-      Storage *train_edges = get<0>(storage_ptrs);
-      Storage *eval_edges = get<1>(storage_ptrs);
-      Storage *test_edges = get<2>(storage_ptrs);
+  Storage *embeds = get<3>(storage_ptrs);
+  Storage *embeds_state = get<4>(storage_ptrs);
 
-      Storage *embeddings = get<3>(storage_ptrs);
-      Storage *emb_state = get<4>(storage_ptrs);
+  Storage *src_rel = get<5>(storage_ptrs);
+  Storage *src_rel_state = get<6>(storage_ptrs);
+  Storage *dst_rel = get<7>(storage_ptrs);
+  Storage *dst_rel_state = get<8>(storage_ptrs);
 
-      Storage *src_rel = get<5>(storage_ptrs);
-      Storage *src_rel_state = get<6>(storage_ptrs);
-      Storage *dst_rel = get<7>(storage_ptrs);
-      Storage *dst_rel_state = get<8>(storage_ptrs);
+  bool will_evaluate = !(marius_options.path.validation_edges.empty() && marius_options.path.test_edges.empty());
 
-      bool will_evaluate = !(marius_options.path.validation_edges.empty() && marius_options.path.test_edges.empty());
-
-      train_set = new DataSet(train_edges, embeddings, emb_state, src_rel, src_rel_state, dst_rel, dst_rel_state);
-      SPDLOG_INFO("Training set initialized");
-      if (will_evaluate) {
-          eval_set = new DataSet(train_edges, eval_edges, test_edges, embeddings, src_rel, dst_rel);
-          SPDLOG_INFO("Evaluation set initialized");
-      }
-
-      preprocessing_timer.stop();
-      int64_t preprocessing_time = preprocessing_timer.getDuration();
-
-      SPDLOG_INFO("Preprocessing Complete: {}s", (double) preprocessing_time / 1000);
-
-      Trainer *trainer;
-      Evaluator *evaluator;
-
-      if (marius_options.training.synchronous) {
-          trainer = new SynchronousTrainer(train_set, model);
-      } else {
-          trainer = new PipelineTrainer(train_set, model);
-      }
-
-      if (will_evaluate) {
-          if (marius_options.evaluation.synchronous) {
-              evaluator = new SynchronousEvaluator(eval_set, model);
-          } else {
-              evaluator = new PipelineEvaluator(eval_set, model);
-          }
-      }
-
-      for (int epoch = 0; epoch < marius_options.training.num_epochs; epoch += marius_options.evaluation.epochs_per_eval) {
-          int num_epochs = marius_options.evaluation.epochs_per_eval;
-          if (marius_options.training.num_epochs < num_epochs) {
-              num_epochs = marius_options.training.num_epochs;
-              trainer->train(num_epochs);
-          } else {
-              trainer->train(num_epochs);
-              if (will_evaluate) {
-                  evaluator->evaluate(epoch + marius_options.evaluation.epochs_per_eval < marius_options.training.num_epochs);
-              }
-          }
-      }
-      embeddings->unload(true);
-      src_rel->unload(true);
-      dst_rel->unload(true);
-
-
-      // garbage collect
-      delete trainer;
-      delete train_set;
-      if (will_evaluate) {
-          delete evaluator;
-          delete eval_set;
-      }
-
-      freeTrainStorage(train_edges, eval_edges, test_edges, embeddings, emb_state, src_rel, src_rel_state, dst_rel, dst_rel_state);
-
+  train_set = new DataSet(train_edges, embeds, embeds_state, src_rel, src_rel_state, dst_rel, dst_rel_state);
+  SPDLOG_INFO("Training set initialized");
+  if (will_evaluate) {
+      eval_set = new DataSet(train_edges, eval_edges, test_edges, embeds, src_rel, dst_rel);
+      SPDLOG_INFO("Evaluation set initialized");
   }
-  worker.start_working();
+
+  preprocessing_timer.stop();
+  int64_t preprocessing_time = preprocessing_timer.getDuration();
+
+  SPDLOG_INFO("Preprocessing Complete: {}s", (double) preprocessing_time / 1000);
+
+  Trainer *trainer;
+  Evaluator *evaluator;
+
+  if (marius_options.training.synchronous) {
+      trainer = new SynchronousTrainer(train_set, model);
+  } else {
+      trainer = new PipelineTrainer(train_set, model);
+  }
+
+  if (will_evaluate) {
+      if (marius_options.evaluation.synchronous) {
+          evaluator = new SynchronousEvaluator(eval_set, model);
+      } else {
+          evaluator = new PipelineEvaluator(eval_set, model);
+      }
+  }
+  // train_set, eval_set, trainer, evaluator are not populated.
+  // Sending them to worker. 
+  worker.start_working(train_set, eval_set, 
+                        trainer, evaluator, 
+                        (PartitionBufferStorage*)embeds, 
+                        (PartitionBufferStorage*)embeds_state);
   worker.stop_working();
+  embeds->unload(true);
+  src_rel->unload(true);
+  dst_rel->unload(true);
+
+
+  // garbage collect
+  delete trainer;
+  delete train_set;
+  if (will_evaluate) {
+      delete evaluator;
+      delete eval_set;
+  }
+
+  freeTrainStorage(train_edges, eval_edges, test_edges, embeds, embeds_state, src_rel, src_rel_state, dst_rel, dst_rel_state);
+
 }
