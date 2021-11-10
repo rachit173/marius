@@ -47,7 +47,7 @@ public:
     // TODO(scaling)
     torch::Tensor ConvertToTensor() { return torch::zeros({1}); }
     // TODO(scaling)
-    static void ConvertToPartitionion(const torch::Tensor& tensor, Partition* out) {}
+    static void ConvertToPartition(const torch::Tensor& tensor, Partition* out) {}
 
 };
 
