@@ -7,7 +7,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <experimental/filesystem>
+#include <filesystem>
 #include <iostream>
 
 #include "config.h"
@@ -16,7 +16,7 @@
 
 using std::ios;
 using std::ios_base;
-namespace fs = std::experimental::filesystem;
+namespace fs = std::filesystem;
 PartitionBufferStorage::PartitionBufferStorage(string filename, int64_t dim0_size, int64_t dim1_size, torch::ScalarType dtype, int64_t capacity, bool embeddings) {
     filename_ = filename;
     dim0_size_ = dim0_size;

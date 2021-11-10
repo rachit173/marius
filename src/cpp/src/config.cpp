@@ -5,13 +5,13 @@
 #include "config.h"
 
 #include <exception>
-#include <experimental/filesystem>
+#include <filesystem>
 #include <sstream>
 
 #include <cxxopts.hpp>
 #include <INIReader.h>
 
-namespace fs = std::experimental::filesystem;
+namespace fs = std::filesystem;
 
 MariusOptions marius_options = MariusOptions();
 TimestampAllocator global_timestamp_allocator = TimestampAllocator();

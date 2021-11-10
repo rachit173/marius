@@ -4,7 +4,7 @@
 
 #include "io.h"
 
-#include <experimental/filesystem>
+#include <filesystem>
 
 #include "config.h"
 #include "logger.h"
@@ -20,7 +20,7 @@ using std::forward_as_tuple;
 using std::ios;
 using std::to_string;
 using std::cout;
-namespace fs = std::experimental::filesystem;
+namespace fs = std::filesystem;
 
 void createDir(const string &path) {
 
