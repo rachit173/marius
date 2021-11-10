@@ -146,6 +146,10 @@ class PartitionBufferStorage : public Storage {
         buffer_->setOrdering(batches);
     }
 
+    PartitionBuffer* getPartitionBuffer() {
+        return buffer_;
+    }
+
     int64_t getHits() {
         return buffer_->getHits();
     }

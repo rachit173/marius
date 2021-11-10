@@ -52,11 +52,17 @@ DataSet::DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storag
         batches_ = ((PartitionBufferStorage *) node_embeddings_)->shuffleBeforeEvictions(batches_);
         batch_iterator_ = batches_.begin();
         SPDLOG_DEBUG("Batches shuffled");
-        // TODO(scaling):
+        // TODO(scaling): Done
         // Need to remove set Ordering function
         // to avoid static ordering
-        ((PartitionBufferStorage *) node_embeddings_)->setOrdering(batches_);
-        ((PartitionBufferStorage *) node_embeddings_optimizer_state_)->setOrdering(batches_);
+        if (marius_options.communication.prefix == "") {
+            // Single node execution.
+            ((PartitionBufferStorage *) node_embeddings_)->setOrdering(batches_);
+            ((PartitionBufferStorage *) node_embeddings_optimizer_state_)->setOrdering(batches_);
+        }  else {
+            // Multi-node execution.
+        }
+
         SPDLOG_DEBUG("Edge bucket ordering set");
     }
 }
@@ -371,12 +377,11 @@ Batch *DataSet::getBatchScaling() {
 Batch *DataSet::nextBatchScaling() {
     std::unique_lock batch_lock(*batches_scaling_lock_);
     Batch *batch;
-    if (batch_iterator_ != batches_.end()) {
-        batch = *batch_iterator_;
-        batch_iterator_++;
-    } else {
+    if (batches_scaling_.empty()) {
         return nullptr;
     }
+    batch = batches_scaling_.front();
+    batches_scaling_.pop();
     current_edge_ += batch->batch_size_;
     return batch;
 }
@@ -838,8 +843,14 @@ void DataSet::nextEpoch() {
             ((PartitionBufferStorage *) node_embeddings_optimizer_state_)->sync();
             initializeBatches();
             batches_ = ((PartitionBufferStorage *) node_embeddings_)->shuffleBeforeEvictions(batches_);
-            ((PartitionBufferStorage *) node_embeddings_)->setOrdering(batches_);
-            ((PartitionBufferStorage *) node_embeddings_optimizer_state_)->setOrdering(batches_);
+            // TODO(scaling): Done.
+            if (marius_options.communication.prefix == "") {
+                // Single node execution.
+                ((PartitionBufferStorage *) node_embeddings_)->setOrdering(batches_);
+                ((PartitionBufferStorage *) node_embeddings_optimizer_state_)->setOrdering(batches_);
+            }  else {
+                // Multi-node execution.
+            }
         }
     }
 

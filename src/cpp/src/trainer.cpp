@@ -67,10 +67,24 @@ void SynchronousTrainer::train(int num_epochs) {
         timer.start();
         SPDLOG_INFO("################ Starting training epoch {} ################", data_set_->getEpochsProcessed() + 1);
         int num_batches = 0;
-        while (data_set_->hasNextBatch()) {
-
-            Batch *batch = data_set_->getBatch(); // gets the node embeddings and edges for the batch
-
+        auto checkNextBatch = [&]() {
+            if (marius_options.communication.prefix == "") {
+                // Single node execution.
+                return data_set_->hasNextBatch();
+            } else {
+                // Multi-node execution.
+                return data_set_->hasNextBatchScaling();
+            }
+        };
+        while (checkNextBatch()) {
+            Batch* batch; // node embeddings and edges for the next batch to be processed.
+            if (marius_options.communication.prefix == "") {
+                // Single node execution.
+                batch = data_set_->getBatch(); 
+            } else {
+                // Multi-node execution.
+                batch = data_set_->getBatchScaling();
+            }
             batch->embeddingsToDevice(0); // transfers the node embeddings to the GPU
 
             data_set_->loadGPUParameters(batch); // load the edge-type embeddings to batch

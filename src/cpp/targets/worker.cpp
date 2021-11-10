@@ -73,6 +73,8 @@ class WorkerNode {
         evaluator_ = evaluator;
         embeds_ = embeds;
         embeds_state_ = embeds_state;
+        pb_embeds_ = embeds_->getPartitionBuffer();
+        pb_embeds_state_ = embeds_state_->getPartitionBuffer();
       }
       // Need 
       // 1. Request partitions when below capacity.
@@ -257,6 +259,8 @@ class WorkerNode {
   Evaluator* evaluator_;
   PartitionBufferStorage* embeds_;
   PartitionBufferStorage* embeds_state_;
+  PartitionBuffer* pb_embeds_;
+  PartitionBuffer* pb_embeds_state_;
 };
 
 
