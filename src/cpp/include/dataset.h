@@ -163,7 +163,10 @@ class DataSet {
      * Get Batch using communcation with coordinator and other workers.
      */
     Batch *getBatchScaling();
-
+    /**
+     * Add batch specified by the src and dst id to batches_scaling_ queue.
+     */
+    void addBatchScaling(int src, int dst);
     /**
      * Loads edges and samples negatives to construct a batch
      * @param batch: Batch object to load edges and samples into.

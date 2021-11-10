@@ -373,6 +373,24 @@ Batch *DataSet::getBatchScaling() {
     return batch;
 }
 
+void DataSet::addBatchScaling(int src, int dst) {
+    // Find the batch specified by src and dst.
+    Batch* batch;
+    // TODO(scaling): replace the search with a map based lookup.
+    for (auto b: batches_) {
+        if((src == ((PartitionBatch*)b)->src_partition_idx_)
+            && dst == (((PartitionBatch*)b)->dst_partition_idx_)) {
+                batch = b;
+                break;
+            }
+    }
+    // Add the batch to batches_scaling queue
+    {
+        std::unique_lock batch_lock(*batches_scaling_lock_);
+        batches_scaling_.push(batch);
+    }
+}
+
 // TODO(scaling): use batches_scaling_ queue and batches_scaling_ lock
 Batch *DataSet::nextBatchScaling() {
     std::unique_lock batch_lock(*batches_scaling_lock_);

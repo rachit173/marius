@@ -60,6 +60,7 @@ class WorkerNode {
       sleep_time_ = 100; // us
       int partition_size_ = 10;
       int embedding_dims_ = 12;
+      processed_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
     }
     void start_working(DataSet* trainset, DataSet* evalset, 
                         Trainer* trainer, Evaluator* evaluator, 
@@ -92,12 +93,24 @@ class WorkerNode {
       threads_.emplace_back(std::thread([&](){
         this->ProcessPartitions();
       }));
+      threads_.emplace_back(std::thread([&](){
+        this->RunTrainer();
+      }));
       for (auto& t: threads_) {
         t.join();
       }
     }
     void stop_working() {}
   private:
+    void ClearProcessedInteractions() {
+      assert(processed_interactions_.size() == num_partitions_);
+      assert(processed_interactions_[0].size() == num_partitions_);
+      for (int i = 0; i < num_partitions_; i++) {
+        for (int j = 0; j < num_partitions_; j++) {
+          processed_interactions_[i][j] = 0;
+        }
+      }
+    }
     PartitionMetadata RequestPartition() {
       torch::Tensor tensor = torch::zeros({1}) + 1; // command is 1 for request partition.
       std::vector<at::Tensor> tensors({tensor});
@@ -192,8 +205,13 @@ class WorkerNode {
               if (recv_work) {
                 recv_work->wait();
               }
-              // set the received tensor to the node map
+              // Set the received tensor to the node map
               node_map[part.idx] = std::make_shared<torch::Tensor>(std::move(node_embed_tensors[0]));
+            }
+            // Add the received partitions to avail_parts_ vector.
+            {
+              WriteLock w_lock(avail_parts_rw_mutex_);
+              avail_parts_.push_back(part);
             }
           }
           // TODO: all sleep based code can be converted to conditional
@@ -229,10 +247,32 @@ class WorkerNode {
       }
     }
     void ProcessPartitions() {
+      // Generate interactions to be processed.
+      // @TODO(scaling): Implement optimal strategies.
+      // The strategy computation is expected to be fast and thus we can hold locks
+      std::vector<pair<int, int>> interactions;
+      {
+        ReadLock r_lock(avail_parts_rw_mutex_);
+        for (int i = 0; i < avail_parts_.size(); i++) {
+          for (int j = 0; j < avail_parts_.size(); j++) {
+            if (processed_interactions_[i][j] == 0) {
+              interactions.push_back({i, j});
+              processed_interactions_[i][j] = 1;
+            }
+          }
+        }
+      }
+      for (auto interaction: interactions) {
+        int src = interaction.first;
+        int dst = interaction.second;
+        // Add batch to dataset batches queue. 
+        trainset_->addBatchScaling(src, dst);
+      }
+    }
+    void RunTrainer() {
       int num_epochs = 1;
       trainer_->train(num_epochs);
       // TODO(scaling): Add evaluation code.
-
     }
   private:
   std::shared_ptr<c10d::ProcessGroupGloo> pg_;
@@ -251,6 +291,7 @@ class WorkerNode {
   std::vector<std::thread> threads_;
   mutable std::shared_mutex node_map_rw_mutex_;
   std::vector<std::shared_ptr<torch::Tensor>> node_map;
+  vector<vector<int>> processed_interactions_;
   int partition_size_;
   int embedding_dims_;
   DataSet* trainset_;
@@ -280,8 +321,8 @@ int main(int argc, char* argv[]) {
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
     prefixstore, rank, world_size, options);
-  int num_partitions = 8;
-  int capacity = 4;
+  int num_partitions = marius_options.storage.num_partitions;
+  int capacity = marius_options.storage.buffer_capacity;
   WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1);
   std::string log_file = marius_options.general.experiment_name;
   MariusLogger marius_logger = MariusLogger(log_file);
