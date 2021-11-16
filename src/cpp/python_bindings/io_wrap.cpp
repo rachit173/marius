@@ -4,6 +4,7 @@
 #include "config.h"
 #include "dataset.h"
 #include "io.h"
+#include "worker.h"
 
 namespace py = pybind11;
 
@@ -30,11 +31,13 @@ tuple<DataSet *, DataSet*> initializeDatasets(MariusOptions config) {
     Storage *rhs_rel = std::get<7>(storage_ptrs);
     Storage *rhs_rel_state = std::get<8>(storage_ptrs);
 
+    CommWorker *comm_worker = new CommWorker(marius_options);
+
     bool will_train = !(marius_options.path.train_edges.empty());
     bool will_evaluate = !(marius_options.path.validation_edges.empty() && marius_options.path.test_edges.empty());
 
     if (will_train) {
-        train_set = new DataSet(train_edges, embeddings, emb_state, lhs_rel, lhs_rel_state, rhs_rel, rhs_rel_state);
+        train_set = new DataSet(train_edges, embeddings, emb_state, lhs_rel, lhs_rel_state, rhs_rel, rhs_rel_state, comm_worker);
         SPDLOG_INFO("Training set initialized");
     }
     if (will_evaluate) {

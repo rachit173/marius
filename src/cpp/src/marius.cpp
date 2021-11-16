@@ -9,6 +9,16 @@
 #include "trainer.h"
 #include "util.h"
 
+#include "worker.h"
+
+#include <torch/torch.h>
+#include <c10d/FileStore.hpp>
+#include <c10d/PrefixStore.hpp>
+#include <c10d/Store.hpp>
+#include <c10d/ProcessGroupGloo.hpp>
+#include <c10d/GlooDeviceFactory.hpp>
+#include <c10d/frontend.hpp>
+
 using std::get;
 
 void marius(int argc, char *argv[]) {
@@ -46,6 +56,7 @@ void marius(int argc, char *argv[]) {
     Model *model = initializeModel(marius_options.model.encoder_model, marius_options.model.decoder_model);
 
     if (train) {
+        CommWorker* commWorker = new CommWorker(marius_options);
         tuple<Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *, Storage *> storage_ptrs = initializeTrain();
         Storage *train_edges = get<0>(storage_ptrs);
         Storage *eval_edges = get<1>(storage_ptrs);
@@ -61,7 +72,7 @@ void marius(int argc, char *argv[]) {
 
         bool will_evaluate = !(marius_options.path.validation_edges.empty() && marius_options.path.test_edges.empty());
 
-        train_set = new DataSet(train_edges, embeddings, emb_state, src_rel, src_rel_state, dst_rel, dst_rel_state);
+        train_set = new DataSet(train_edges, embeddings, emb_state, src_rel, src_rel_state, dst_rel, dst_rel_state, commWorker);
         SPDLOG_INFO("Training set initialized");
         if (will_evaluate) {
             eval_set = new DataSet(train_edges, eval_edges, test_edges, embeddings, src_rel, dst_rel);

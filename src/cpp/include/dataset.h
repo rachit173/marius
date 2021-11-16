@@ -16,7 +16,7 @@
 #include "datatypes.h"
 #include "logger.h"
 #include "storage.h"
-
+#include "worker.h"
 using std::map;
 using std::vector;
 using std::tuple;
@@ -67,11 +67,13 @@ class DataSet {
 
     Timestamp timestamp_;                                /**< Timestamp of the current state of the program data */
 
+    CommWorker* commWorker_;
+
   public:
     /**
      * Training set constructor
      */
-    DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storage *src_relations, Storage *src_rel_state, Storage *dst_relations, Storage *dst_rel_state);
+    DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storage *src_relations, Storage *src_rel_state, Storage *dst_relations, Storage *dst_rel_state, CommWorker* commWorker);
 
     /**
      * Evaluation set constructor

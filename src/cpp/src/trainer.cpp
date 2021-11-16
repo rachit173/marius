@@ -27,8 +27,11 @@ PipelineTrainer::PipelineTrainer(DataSet *data_set, Model *model) {
 }
 
 void PipelineTrainer::train(int num_epochs) {
+    SPDLOG_INFO("Allocate PartitionBuffer for storing different things: node embeddings, edges, etc");
     data_set_->loadStorage();
+
     Timer timer = Timer(false);
+    std::cout << "Num epochs: " << num_epochs << std::endl;
     for (int epoch = 0; epoch < num_epochs; epoch++) {
         timer.start();
         SPDLOG_INFO("################ Starting training epoch {} ################", data_set_->getEpochsProcessed() + 1);

@@ -1,3 +1,6 @@
+#ifndef MARIUS_COMM_MSG_H
+#define MARIUS_COMM_MSG_H
+
 #include <torch/torch.h>
 #include <vector>
 
@@ -35,3 +38,5 @@ struct PartitionMetadata {
     return PartitionMetadata(idx, src);
   }
 };
+
+#endif

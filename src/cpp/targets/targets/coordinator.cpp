@@ -117,8 +117,7 @@ int main(int argc, char* argv[]) {
   int rank = marius_options.communication.rank;
   int world_size = marius_options.communication.world_size;
   std::string prefix = marius_options.communication.prefix;
-  int num_partitions = marius_options.storage.num_partitions;
-  std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << "Num partitions: " << num_partitions << std::endl;
+  std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
 
   auto filestore = c10::make_intrusive<c10d::FileStore>("/proj/uwmadison744-f21-PG0/file", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
@@ -131,6 +130,7 @@ int main(int argc, char* argv[]) {
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
     prefixstore, rank, world_size, options);
+  int num_partitions = 8;
   Coordinator coordinator(pg, num_partitions, world_size-1);
   coordinator.start_working();
   coordinator.stop_working();

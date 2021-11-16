@@ -382,7 +382,7 @@ PartitionBuffer::~PartitionBuffer() {
 
 void PartitionBuffer::load() {
     if (!loaded_) {
-
+        std::cout << "Allocating memory for partition buffer" << std::endl;
         if (posix_memalign(&buff_mem_, 4096, capacity_ * partition_size_ * embedding_size_ * dtype_size_)) {
             SPDLOG_ERROR("Unable to allocate buffer memory\nError: {}", errno);
             exit(-1);
@@ -568,6 +568,7 @@ void PartitionBuffer::admit(Partition *partition) {
         if (admit_ids_itr_ != admit_ids_.end()) {
             next_partition = partition_table_[*admit_ids_itr_++];
         }
+        // commworker->RequestPartitions();
         lookahead_block_->move_to_buffer(buff_addr, buffer_idx, next_partition);
     } else {
         partition->lock_->lock();
@@ -578,6 +579,7 @@ void PartitionBuffer::admit(Partition *partition) {
     }
 
     size_++;
+    SPDLOG_TRACE("Getting access_lock");
     access_lock_.lock();
     accesses_before_admit_ = *(admit_access_ids_itr_ + 1) - *admit_access_ids_itr_;
     admit_access_ids_itr_++;

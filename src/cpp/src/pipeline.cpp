@@ -58,6 +58,7 @@ void LoadEmbeddingsWorker::run() {
                 // the call getBatch().
                 Batch* batch;
                 if (marius_options.communication.prefix == "") {
+                    std::cout << "Getting node embeddings" << std::endl;
                     batch = pipeline_->data_set_->getBatch();
                 } else {
                     batch = pipeline_->data_set_->getBatchScaling();
@@ -396,6 +397,7 @@ PipelineCPU::PipelineCPU(DataSet *data_set, Model *model, bool train, struct tim
     edges_processed_ = 0;
 
     if (train_) {
+        std::cout << "Init Queues for pipelined training" << std::endl;
         loaded_batches_ = new Queue<Batch *>(marius_options.training_pipeline.embeddings_host_queue_size);
         prepped_batches_ = new Queue<Batch *>(marius_options.training_pipeline.embeddings_host_queue_size);
         unaccumulated_batches_ = new Queue<Batch *>(marius_options.training_pipeline.embeddings_host_queue_size);
@@ -478,6 +480,7 @@ void PipelineCPU::addWorkersToPool(int pool_id, int worker_type, int num_workers
 
 void PipelineCPU::initialize() {
     if (train_) {
+        std::cout << "Initialize pipeline stages workers" << std::endl;
         addWorkersToPool(0, EMBEDDINGS_LOADER_ID, marius_options.training_pipeline.num_embedding_loader_threads);
         addWorkersToPool(1, CPU_BATCH_PREP_ID, marius_options.training_pipeline.num_compute_threads);
         addWorkersToPool(2, CPU_COMPUTE_ID, marius_options.training_pipeline.num_compute_threads);

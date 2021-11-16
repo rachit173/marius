@@ -186,6 +186,7 @@ struct CommunicationOptions {
     int rank;
     int world_size;
     string prefix;
+    int num_partitions;
 };
 
 struct ReportingOptions {

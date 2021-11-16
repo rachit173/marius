@@ -4,6 +4,8 @@
 
 #include "dataset.h"
 
+#include "message.h"
+// #include "worker.h"
 #include "ordering.h"
 
 #include<iostream>
@@ -13,7 +15,7 @@ using std::forward_as_tuple;
 using std::tie;
 
 // training constructor
-DataSet::DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storage *src_relations, Storage *src_rel_state, Storage *dst_relations, Storage *dst_rel_state) {
+DataSet::DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storage *src_relations, Storage *src_rel_state, Storage *dst_relations, Storage *dst_rel_state, CommWorker* commWorker ) {
     train_ = true;
     current_edge_ = 0;
     current_negative_id_ = 0;
@@ -35,10 +37,14 @@ DataSet::DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storag
     dst_relations_optimizer_state_ = dst_rel_state;
     num_relations_ = src_relations_->getDim0();
 
+    commWorker_ = commWorker;
+
     initializeBatches();
     batch_iterator_ = batches_.begin();
     timestamp_ = global_timestamp_allocator.getTimestamp();
-    std::cout << "Initialize batches " << batches_.size() << std::endl;
+
+    std::cout << "Cannot print batch global order as it is dynamic!" << std::endl;
+    std::cout << "Printing batch metadata:\n Number of batches: " << batches_.size() << std::endl;
     for (auto batch: batches_) {
         std::cout << "Batch id: " << batch->batch_id_ << ", ";
         std::cout << "Batch size: " << batch->batch_size_ << ", ";
@@ -48,10 +54,11 @@ DataSet::DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storag
         std::cout << std::endl;
     }
     if (marius_options.storage.embeddings == BackendType::PartitionBuffer) {
-        SPDLOG_DEBUG("Setup partition ordering");
-        batches_ = ((PartitionBufferStorage *) node_embeddings_)->shuffleBeforeEvictions(batches_);
-        batch_iterator_ = batches_.begin();
-        SPDLOG_DEBUG("Batches shuffled");
+        SPDLOG_INFO("Skipping Partition ordering....");
+        // SPDLOG_DEBUG("Setup partition ordering");
+        // batches_ = ((PartitionBufferStorage *) node_embeddings_)->shuffleBeforeEvictions(batches_);
+        // batch_iterator_ = batches_.begin();
+        // SPDLOG_DEBUG("Batches shuffled");
         // TODO(scaling): Done
         // Need to remove set Ordering function
         // to avoid static ordering
@@ -222,8 +229,10 @@ void DataSet::initializeBatches() {
         }
 
         batches_ = batches;
-        auto ordered_batches = applyOrdering(batches_);
-        batches_ = ordered_batches;
+        // Remove ordering and use batches_ as the source of batch metadata across workers
+        // auto ordered_batches = applyOrdering(batches_);
+        // batches_ = ordered_batches;
+
         // TODO(scaling): The split batches
         // splits batches into smaller batches if 
         // if their size is greater max_batch_size
@@ -235,6 +244,7 @@ void DataSet::initializeBatches() {
             SPDLOG_INFO("Splitting batches");
             splitBatches();
         } else {
+            
             SPDLOG_INFO("Not splitting batches");
         }
 
@@ -330,6 +340,15 @@ void DataSet::clearBatches() {
 
     }
     batches_ = std::vector<Batch *>();
+    {
+        // clear the queue
+        std::cout << "Clearing the batch queue" << std::endl;
+        std::unique_lock batch_lock(*batches_scaling_lock_);
+        while(!batches_scaling_.empty()){
+            batches_scaling_.pop();
+        }
+        batch_lock.unlock();
+    }
 }
 
 // TODO(scaling): Change point.
@@ -393,15 +412,47 @@ void DataSet::addBatchScaling(int src, int dst) {
 
 // TODO(scaling): use batches_scaling_ queue and batches_scaling_ lock
 Batch *DataSet::nextBatchScaling() {
-    std::unique_lock batch_lock(*batches_scaling_lock_);
-    Batch *batch;
-    if (batches_scaling_.empty()) {
-        return nullptr;
-    }
-    batch = batches_scaling_.front();
-    batches_scaling_.pop();
-    current_edge_ += batch->batch_size_;
-    return batch;
+    // Scaling: Blocking call to co-ordinator
+    // PartitionMetadata partitionMetadata =  commWorker_->RequestPartition();
+
+    // int num_partitions = commWorker_->num_partitions_;
+    // int src_partition, dest_partition = partitionMetadata.idx;
+    // // Select first unprocessed batch for the 
+    // for(int i = 0; i < num_partitions; i++) {
+    //     if(commWorker_->processed_interactions_[i][dest_partition] != 0) {
+    //         src_partition = i;
+    //         commWorker_->processed_interactions_[i][dest_partition] = 1;
+    //         break;
+    //     }
+    // }
+
+    // // Match with selected batch
+    // Batch* required_batch = nullptr;
+    // for(auto b: batches_) {
+    //     int src = b->batch_id_ / (int) sqrt(edge_bucket_sizes_.size()), dest = b->batch_id_ % (int) sqrt(edge_bucket_sizes_.size());
+    //     if(src == src_partition && dest == dest_partition){
+    //         required_batch = b;
+    //         break;
+    //     }
+    // }
+
+    // current_edge_ += required_batch->batch_size_;
+
+    // return required_batch;
+
+
+    return nullptr;
+
+
+    // std::unique_lock batch_lock(*batches_scaling_lock_);
+    // Batch *batch;
+    // if (batches_scaling_.empty()) {
+    //     return nullptr;
+    // }
+    // batch = batches_scaling_.front();
+    // batches_scaling_.pop();
+    // current_edge_ += batch->batch_size_;
+    // return batch;
 }
 // TODO(scaling): Following funtion loads
 // a batch using the batch iterator
@@ -887,6 +938,7 @@ void DataSet::checkpointParameters() {
 void DataSet::loadStorage() {
     edges_->load();
     if (train_) {
+        std::cout << "Loading embeddings from PartitionBuffer.." << std::endl;
         node_embeddings_->load();
         node_embeddings_optimizer_state_->load();
         src_relations_->load();

@@ -240,6 +240,7 @@ MariusOptions parseConfig(int64_t argc, char *argv[]) {
     string prefix;
     int rank;
     int world_size;
+    int partitions;
 
     s_var_map.push_back((OptInfo<std::string>){&s_edges_backend, "HostMemory", "storage", "edges_backend"});
     b_var_map.push_back((OptInfo<bool>){&reinit_edges, true, "storage", "reinit_edges"});
@@ -255,6 +256,7 @@ MariusOptions parseConfig(int64_t argc, char *argv[]) {
     i_var_map.push_back((OptInfo<int>){&num_partitions, 1, "storage", "num_partitions", {1, INT32_MAX}});
     i_var_map.push_back((OptInfo<int>){&rank, 0, "communication", "rank", {0, INT32_MAX}});
     i_var_map.push_back((OptInfo<int>){&world_size, 0, "communication", "world_size", {0, INT32_MAX}});
+    i_var_map.push_back((OptInfo<int>){&partitions, 1, "communication", "partitions", {1, INT32_MAX}});
     i_var_map.push_back((OptInfo<int>){&buffer_capacity, 2, "storage", "buffer_capacity", {2, INT32_MAX}});
     b_var_map.push_back((OptInfo<bool>){&prefetching, true, "storage", "prefetching"});
     b_var_map.push_back((OptInfo<bool>){&conserve_memory, false, "storage", "conserve_memory"});

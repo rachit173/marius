@@ -8,6 +8,8 @@
 #include "batch.h"
 #include "datatypes.h"
 
+// #include "worker.h"
+
 // TODO(scaling)
 // 1. Serialize/Deserialize for transport over network.
 // 2. Worker should be able to update the data_ptr_ and/or tensor_ by fetching from remote workers.
@@ -136,6 +138,9 @@ class PartitionBuffer {
     int64_t total_embeddings_;
     torch::Dtype dtype_;                                            /**< Datatype of the embeddings */
     int dtype_size_;
+
+    // communication worker
+    // CommWorker* commworker;
 
     // counters
     std::atomic<int> hits_;

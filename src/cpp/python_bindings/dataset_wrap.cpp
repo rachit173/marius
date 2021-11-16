@@ -8,9 +8,9 @@ namespace py = pybind11;
 void init_dataset(py::module &m) {
     // bindings to DataSet class
     py::class_<DataSet>(m, "DataSet")
-        .def(py::init<Storage*, Storage*, Storage*, Storage*, Storage*, Storage*, Storage*>(),
+        .def(py::init<Storage*, Storage*, Storage*, Storage*, Storage*, Storage*, Storage*, CommWorker*>(),
             py::arg("edges"), py::arg("embeddings"), py::arg("emb_state"), py::arg("lhs_relations"), py::arg("lhs_rel_state"),
-            py::arg("rhs_relations"), py::arg("rhs_rel_state"))
+            py::arg("rhs_relations"), py::arg("rhs_rel_state"), py::arg("comm_worker"))
         .def(py::init<Storage*, Storage*, Storage*, Storage*, Storage*, Storage*>(),
             py::arg("train_edges"), py::arg("eval_edges"), py::arg("test_edges"), py::arg("embeddings"), py::arg("lhs_relations"), py::arg("rhs_relations"))
         .def(py::init<Storage*, Storage*, Storage*, Storage*>(),
