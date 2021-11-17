@@ -375,7 +375,7 @@ Batch *DataSet::getBatchScaling() {
 
 void DataSet::addBatchScaling(int src, int dst) {
     // Find the batch specified by src and dst.
-    Batch* batch;
+    Batch* batch = nullptr;
     // TODO(scaling): replace the search with a map based lookup.
     for (auto b: batches_) {
         if((src == ((PartitionBatch*)b)->src_partition_idx_)
@@ -383,6 +383,11 @@ void DataSet::addBatchScaling(int src, int dst) {
                 batch = b;
                 break;
             }
+    }
+    if (batch == nullptr) {
+        SPDLOG_ERROR("Could not find the batch in batches_");
+        exit(1);
+        // return;
     }
     // Add the batch to batches_scaling queue
     {
