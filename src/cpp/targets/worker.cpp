@@ -88,6 +88,9 @@ class WorkerNode {
         this->DispatchPartitionsToCoordinator();
       }));
       threads_.emplace_back(std::thread([&](){
+        this->TransferPartitionsFromWorkerNodes();
+      }));
+      threads_.emplace_back(std::thread([&](){
         this->TransferPartitionsToWorkerNodes();
       }));
       threads_.emplace_back(std::thread([&](){
@@ -178,15 +181,20 @@ class WorkerNode {
     }
     void fetchFromStorage(int part_num) {
       // For now just generate a random embedding vector.
-      node_map[part_num] = std::make_shared<torch::Tensor>(torch::randn({partition_size_, embedding_dims_}));
+      // node_map[part_num] = std::make_shared<torch::Tensor>(torch::randn({partition_size_, embedding_dims_}));
     }
     void TransferPartitionsFromWorkerNodes() {
       while (1) {
         {
           while (1) {
-            WriteLock w_lock(transfer_receive_parts_rw_mutex_);
-            if (transfer_receive_parts_.empty()) break;
-            PartitionMetadata part  = transfer_receive_parts_.front();
+            PartitionMetadata part(-1);
+            {
+              WriteLock w_lock(transfer_receive_parts_rw_mutex_);
+              if (transfer_receive_parts_.empty()) break;
+              part  = transfer_receive_parts_.front();
+              transfer_receive_parts_.pop();
+            }
+            std::cout << "Getting partition " << part.idx << " from" << part.src << std::endl; 
             if (part.src == -1) {
               // Needs to fetch it from current storage 
               fetchFromStorage(part.idx);
@@ -211,11 +219,11 @@ class WorkerNode {
             // Add the received partitions to avail_parts_ vector.
             {
               WriteLock w_lock(avail_parts_rw_mutex_);
+              std::cout << "Pushed to avail parts: " << part.src << std::endl;
               avail_parts_.push_back(part);
             }
           }
-          // TODO: all sleep based code can be converted to conditional
-          // variable.
+          // TODO(rrt): convert this to conditional code.
           std::this_thread::sleep_for(std::chrono::microseconds(sleep_time_)); // TODO(rrt): reduce this later;
         }
         
@@ -250,24 +258,32 @@ class WorkerNode {
       // Generate interactions to be processed.
       // @TODO(scaling): Implement optimal strategies.
       // The strategy computation is expected to be fast and thus we can hold locks
-      std::vector<pair<int, int>> interactions;
-      {
-        ReadLock r_lock(avail_parts_rw_mutex_);
-        for (int i = 0; i < avail_parts_.size(); i++) {
-          for (int j = 0; j < avail_parts_.size(); j++) {
-            if (processed_interactions_[i][j] == 0) {
-              interactions.push_back({i, j});
-              processed_interactions_[i][j] = 1;
+      while (1) {
+        std::vector<pair<int, int>> interactions;
+        {
+          ReadLock r_lock(avail_parts_rw_mutex_);
+          for (int i = 0; i < avail_parts_.size(); i++) {
+            for (int j = 0; j < avail_parts_.size(); j++) {
+              if (processed_interactions_[i][j] == 0) {
+                interactions.push_back({i, j});
+                processed_interactions_[i][j] = 1;
+              }
             }
           }
         }
+        if (interactions.size() > 0) std::cout << "Generated Interaction vector " << interactions.size() << std::endl;
+        for (auto interaction: interactions) {
+          int src = interaction.first;
+          int dst = interaction.second;
+          // Add batch to dataset batches queue. 
+          trainset_->addBatchScaling(src, dst);
+          std::cout << "Pushed (" << src << ", " << dst << ") to dataset queue" << std::endl;
+        }
+        // sleep
+        // TODO(rrt): Replace this by a condition variable.
+        std::this_thread::sleep_for(std::chrono::microseconds(sleep_time_));
       }
-      for (auto interaction: interactions) {
-        int src = interaction.first;
-        int dst = interaction.second;
-        // Add batch to dataset batches queue. 
-        trainset_->addBatchScaling(src, dst);
-      }
+
     }
     void RunTrainer() {
       int num_epochs = 1;
