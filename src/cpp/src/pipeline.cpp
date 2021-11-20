@@ -317,10 +317,10 @@ void UpdateEmbeddingsWorker::run() {
             vector<Batch*>* v;
             if (marius_options.general.device == torch::kCUDA) {
                 lock_guard<mutex> guard(((PipelineGPU*)pipeline_)->completed_batches_lock_);
-                ((PipelineCPU*)pipeline_)->completed_batches_.push_back(batch);
+                ((PipelineGPU*)pipeline_)->completed_batches_.push_back(batch);
             } else {
                 lock_guard<mutex> guard(((PipelineCPU*)pipeline_)->completed_batches_lock_);
-                ((PipelineGPU*)pipeline_)->completed_batches_.push_back(batch);
+                ((PipelineCPU*)pipeline_)->completed_batches_.push_back(batch);
             }
             SPDLOG_TRACE("Completed: {}", batch->batch_id_);
 
