@@ -90,6 +90,28 @@ torch::Tensor Partition::indexRead(Indices indices) {
     return ret;
 }
 
+torch::Tensor Partition::ConvertMetaDataToTensor() {
+	int64_t serialize_part[] = { partition_id_, partition_size_, embedding_size_, idx_offset_, file_offset_};
+	auto options = torch::TensorOptions().dtype(torch::kInt64);
+	torch::Tensor serialized = torch::from_blob(serialize_part, {1, 5}, options).clone();
+	return serialized;
+}
+
+torch::Tensor Partition::ConvertDataToTensor() {
+	torch::Tensor serialized_data = torch::from_blob(data_ptr_, {partition_size_, embedding_size_}, dtype_);
+	return serialized_data;
+}
+
+Partition* Partition::ConvertToPartition(const torch::Tensor &tensor) {
+	int64_t partition_id = tensor.data_ptr<int64_t>()[0];
+	int64_t partition_size = tensor.data_ptr<int64_t>()[1];
+	int64_t embedding_size = tensor.data_ptr<int64_t>()[2];
+	int64_t idx_offset = tensor.data_ptr<int64_t>()[3];
+	int64_t file_offset = tensor.data_ptr<int64_t>()[4];
+	Partition* out_part = new Partition(partition_id, partition_size, embedding_size, torch::kFloat32, idx_offset, file_offset);
+	return out_part;
+}
+
 PartitionedFile::PartitionedFile(string filename, int num_partitions, int64_t partition_size, int embedding_size, int64_t total_embeddings, torch::Dtype dtype) {
     num_partitions_ = num_partitions;
     partition_size_ = partition_size;

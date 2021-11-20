@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
     prefixstore, rank, world_size, options);
-  int num_partitions = 8;
+  int num_partitions = marius_options.storage.num_partitions;
   Coordinator coordinator(pg, num_partitions, world_size-1);
   coordinator.start_working();
   coordinator.stop_working();

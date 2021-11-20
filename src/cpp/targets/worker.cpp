@@ -181,81 +181,146 @@ class WorkerNode {
         std::this_thread::sleep_for(std::chrono::microseconds(sleep_time_)); // TODO(rrt): reduce this later;
       }
     }
-    void fetchFromStorage(int part_num) {
-      // For now just generate a random embedding vector.
-      // node_map[part_num] = std::make_shared<torch::Tensor>(torch::randn({partition_size_, embedding_dims_}));
-    }
+
     void TransferPartitionsFromWorkerNodes() {
       while (1) {
-        {
-          while (1) {
-            PartitionMetadata part(-1);
-            {
-              WriteLock w_lock(transfer_receive_parts_rw_mutex_);
-              if (transfer_receive_parts_.empty()) break;
-              part  = transfer_receive_parts_.front();
-              transfer_receive_parts_.pop();
+        while (1) {
+          PartitionMetadata part(-1, -1);
+          {
+            WriteLock w_lock(transfer_receive_parts_rw_mutex_);
+            if (transfer_receive_parts_.empty()) break;
+            part = transfer_receive_parts_.front();
+            transfer_receive_parts_.pop();
+          }
+          // Partition is fetched for the first time from by any node --> No need to communicate.
+          if (part.src == -1) {
+            part.src = rank_; // set current ownership to this node
+          } else {
+            // Source of partition is same as destination --> No action to be taken
+            if (rank_ == part.src) continue;
+
+            //////////////////////////Send Request for Partition and Receive//////////////////////////////////
+            int tag = 1;
+            // ask the other worker for the partition
+            torch::Tensor request = torch::zeros({1});
+            request.data_ptr<float>()[0] = (float) part.idx;
+            std::vector<torch::Tensor> request_tensors({request});
+
+            auto send_work = pg_->send(request_tensors, part.src, tag);
+            if (send_work) {
+              send_work->wait();
             }
-            std::cout << "Getting partition " << part.idx << " from" << part.src << std::endl; 
-            if (part.src == -1) {
-              // Needs to fetch it from current storage 
-              fetchFromStorage(part.idx);
-            } else {
-              int tag = 1;
-              // ask the other worker for the partition
-              torch::Tensor request = torch::zeros({1}) + part.idx;
-              std::vector<at::Tensor> request_tensors({request});
-              auto send_work = pg_->send(request_tensors, part.src, tag);
-              if (send_work) {
-                send_work->wait();
-              }
-              // Receive the tensor from the worker.
-              std::vector<at::Tensor> node_embed_tensors({torch::zeros({partition_size_, embedding_dims_})});
-              auto recv_work = pg_->recv(node_embed_tensors, part.src, tag);
-              if (recv_work) {
-                recv_work->wait();
-              }
-              // Set the received tensor to the node map
-              node_map[part.idx] = std::make_shared<torch::Tensor>(std::move(node_embed_tensors[0]));
+            ////////////////////////////////////////////////////////////////////////////////////
+
+            ///////////////////////////Receive metadata/////////////////////////////////////////////
+            auto options = torch::TensorOptions().dtype(torch::kInt64);
+            torch::Tensor node_embed_tensor = torch::zeros({1, 5}, options);
+            std::vector<torch::Tensor> node_embed_tensors({node_embed_tensor});
+
+            // receive with tag 2
+            tag++;
+            auto recv_work = pg_->recv(node_embed_tensors, part.src, tag);
+            if (recv_work) {
+              recv_work->wait();
             }
-            // Add the received partitions to avail_parts_ vector.
-            {
-              WriteLock w_lock(avail_parts_rw_mutex_);
-              std::cout << "Pushed to avail parts: " << part.src << std::endl;
-              avail_parts_.push_back(part);
+            ////////////////////////////////////////////////////////////////////////////////////
+
+            //////////////////////////////Receive partition Data/////////////////////////////////////
+            // Create Partition from metadata received
+            auto partition = Partition::ConvertToPartition(node_embed_tensors[0]);
+
+            // Receive the tensor having data from the worker.
+            options = torch::TensorOptions().dtype(partition->dtype_);
+            posix_memalign(&(partition->data_ptr_), 4096, partition->partition_size_ * partition->embedding_size_ * partition->dtype_size_);
+            torch::Tensor tensor_data_recvd = torch::from_blob(partition->data_ptr_, {partition->partition_size_,partition->embedding_size_},partition->dtype_);
+
+            // TODO: [Optimization]: class Single large space, any size of partition can be copied there
+            // then directly use pwrite to copy to correct portion of node embeddings                                                   
+            partition->tensor_ = tensor_data_recvd;
+
+            std::vector<torch::Tensor> tensors_data_recvd({tensor_data_recvd});
+            // receive with tag 3
+            tag++;
+            auto recv_data_work = pg_->recv(tensors_data_recvd, part.src, tag);
+            if (recv_data_work) {
+              recv_data_work->wait();
             }
+          }
+          ////////////////////////////////////////////////////////////////////////////////////
+
+          // Add the received partitions to avail_parts_ vector.
+          {
+            WriteLock w_lock(avail_parts_rw_mutex_);
+            SPDLOG_INFO("Received partition {} from src {}. Pushed to avail parts queue", part.idx, part.src);
+            avail_parts_.push_back(part);
+            w_lock.unlock();
           }
           // TODO(rrt): convert this to conditional code.
           std::this_thread::sleep_for(std::chrono::microseconds(sleep_time_)); // TODO(rrt): reduce this later;
         }
-        
       }
     }
+
     void TransferPartitionsToWorkerNodes() {
       // Receive the request and transfer the partition from the node map
       while (1) {
+
+        //////////////////////// 1. Receive request for transfer////////////////////
         int tag = 1;
-        // Receive request for transfer
+        // 
         torch::Tensor request = torch::zeros({1});
-        std::vector<at::Tensor> tensors({request});
+        std::vector<torch::Tensor> tensors({request});
         auto recv_work = pg_->recvAnysource(tensors, tag);
-        int srcRank;
-        if (recv_work) {
+				int srcRank;
+
+		  	if (recv_work) {
           recv_work->wait();
           srcRank = recv_work->sourceRank();
         }
-        int part_idx = tensors[0].data_ptr<float>()[0];
-        // send partition
-        // std::vector<at::Tensor> tensors;
-        // tensors.push_back(std::move(*node_map[part_idx]));
-        // pg_->send();
+        /////////////////////////////////////////////////////////////////////////////
+
+        //////////////////////2. Send Partition Metadata///////////////////////////////
+        // Send partition with partition index 'part_idx'
+				float part_idx = tensors[0].data_ptr<float>()[0];
+
+				// TODO: Fix partition table index
+		  	std::vector<Partition*> partition_table = ((PartitionBufferStorage*)trainset_->getNodeEmbeddings())->getPartitionBuffer()->getPartitionTable();
+				torch::Tensor partition_metadata = partition_table[part_idx]->ConvertMetaDataToTensor();
+				std::vector<torch::Tensor> tensors_to_send({partition_metadata});
 
 
+        tag++;
+        // send metadata with tag 2
+				auto send_serialized_partition = pg_->send(tensors_to_send, srcRank, tag);
 
-        // empty that entry in the node map after sending
-        node_map[part_idx] = nullptr;
+				if(send_serialized_partition) {
+					send_serialized_partition->wait();
+				}
+        /////////////////////////////////////////////////////////////////////////////
+
+        ////////////////////////////////// 3. Send partition data//////////////////////////
+        // TODO: Automate this. Currently manually allocating memory and data to data_ptr_ since load does not work.
+        // Create simple class to access(read and write using offsets) underlying embeddings file
+        // posix_memalign(&(partition_table[0]->data_ptr_), 4096, partition_table[0]->partition_size_ * partition_table[0]->embedding_size_ * partition_table[0]->dtype_size_);
+
+        if(!partition_table[part_idx]->data_ptr_) {
+          SPDLOG_WARN("Memory not allocated for partition id {}", part_idx);
+          continue;
+        }
+
+				torch::Tensor tensor_data_to_send = partition_table[part_idx]->ConvertDataToTensor();
+				std::vector<torch::Tensor> tensors_data_to_send({tensor_data_to_send});
+        // send metadata with tag 3
+        tag++;
+        auto send_part_data = pg_->send(tensors_data_to_send, srcRank, tag);
+
+				if(send_part_data) {
+					send_part_data->wait();
+				}
+        /////////////////////////////////////////////////////////////////////////////
       }
     }
+      
     void ProcessPartitions() {
       // Generate interactions to be processed.
       // @TODO(scaling): Implement optimal strategies.
@@ -266,9 +331,10 @@ class WorkerNode {
           ReadLock r_lock(avail_parts_rw_mutex_);
           for (int i = 0; i < avail_parts_.size(); i++) {
             for (int j = 0; j < avail_parts_.size(); j++) {
-              if (processed_interactions_[i][j] == 0) {
-                interactions.push_back({i, j});
-                processed_interactions_[i][j] = 1;
+              int src = avail_parts_[i].idx, dst = avail_parts_[j].idx;
+              if (processed_interactions_[src][dst] == 0) {
+                interactions.push_back({src, dst});
+                processed_interactions_[src][dst] = 1;
               }
             }
           }
@@ -285,8 +351,8 @@ class WorkerNode {
         // TODO(rrt): Replace this by a condition variable.
         std::this_thread::sleep_for(std::chrono::microseconds(sleep_time_));
       }
-
     }
+    
     void RunTrainer() {
       int num_epochs = 1;
       trainer_->train(num_epochs);

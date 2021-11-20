@@ -279,6 +279,10 @@ class DataSet {
         return batches_processed_;
     }
 
+    Storage* getNodeEmbeddings() {
+        return node_embeddings_;
+    }
+
     tuple<int64_t, int64_t, float> getProgress() {
         return forward_as_tuple(current_edge_, num_edges_, (float) current_edge_ / num_edges_);
     }

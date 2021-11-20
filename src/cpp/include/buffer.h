@@ -44,10 +44,13 @@ public:
     void indexAddAndDecrementUsage(Indices indices, torch::Tensor value);
 
     torch::Tensor indexRead(Indices indices);
-    // TODO(scaling)
-    torch::Tensor ConvertToTensor() { return torch::zeros({1}); }
-    // TODO(scaling)
-    static void ConvertToPartition(const torch::Tensor& tensor, Partition* out) {}
+    
+    /////////////////////////// Scaling ///////////////////////////////////
+    torch::Tensor ConvertMetaDataToTensor();
+
+    torch::Tensor ConvertDataToTensor();
+
+    static Partition* ConvertToPartition(const torch::Tensor &tensor);
 
 };
 
@@ -234,6 +237,10 @@ class PartitionBuffer {
 
     int64_t getBufferEmbeddingsCapacity() {
         return capacity_ * partition_size_;
+    }
+
+    std::vector<Partition *> getPartitionTable() {
+        return partition_table_;
     }
 
     // Get Evictions
