@@ -407,7 +407,7 @@ PipelineCPU::PipelineCPU(DataSet *data_set, Model *model, bool train, struct tim
     model_ = model;
     train_ = train;
     edges_processed_ = 0;
-
+    completed_batches_.reserve(100000);
     if (train_) {
         loaded_batches_ = new Queue<Batch *>(marius_options.training_pipeline.embeddings_host_queue_size);
         prepped_batches_ = new Queue<Batch *>(marius_options.training_pipeline.embeddings_host_queue_size);

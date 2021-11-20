@@ -169,7 +169,8 @@ class Pipeline {
     atomic<int64_t> edges_processed_;
     mutex timestamp_lock_;
     Timestamp oldest_timestamp_;
-
+    std::mutex completed_batches_lock_;
+    vector<Batch*> completed_batches_;
     std::shared_ptr<spdlog::logger> logger_;
 
     std::mutex *pipeline_lock_;
@@ -213,6 +214,8 @@ class Pipeline {
 
     virtual void reportThreadStatus() = 0;
 
+    virtual size_t getCompletedBatchesSize() = 0;
+    
     void reportMRR();
 };
 
@@ -227,8 +230,6 @@ class PipelineCPU : public Pipeline {
     Queue<Batch *> *prepped_batches_;
     Queue<Batch *> *unaccumulated_batches_;
     Queue<Batch *> *update_batches_;
-    std::mutex completed_batches_lock_;
-    vector<Batch*> completed_batches_;
 
     PipelineCPU(DataSet *data_set, Model *model, bool train, struct timespec report_time);
 
@@ -249,6 +250,11 @@ class PipelineCPU : public Pipeline {
     void reportQueueStatus() override;
 
     void reportThreadStatus() override;
+
+    size_t getCompletedBatchesSize() override {
+      std::lock_guard<std::mutex> guard(completed_batches_lock_);
+      return completed_batches_.size();
+    }
 };
 
 class PipelineGPU : public Pipeline {
@@ -262,8 +268,6 @@ class PipelineGPU : public Pipeline {
     std::vector<Queue<Batch *> *> device_loaded_batches_; // multiple queues for multiple devices
     std::vector<Queue<Batch *> *> device_update_batches_; // multiple queues for multiple devices
     Queue<Batch *> *update_batches_;
-    std::mutex completed_batches_lock_;
-    vector<Batch*> completed_batches_;
 
     PipelineGPU(DataSet *data_set, Model *model, bool train, struct timespec report_time);
 
@@ -284,6 +288,11 @@ class PipelineGPU : public Pipeline {
     void reportQueueStatus() override;
 
     void reportThreadStatus() override;
+
+    size_t getCompletedBatchesSize() override {
+      std::lock_guard<std::mutex> guard(completed_batches_lock_);
+      return completed_batches_.size();
+    }
 };
 
 class PipelineMonitor {
