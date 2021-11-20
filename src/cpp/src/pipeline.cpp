@@ -6,10 +6,14 @@
 
 #include "logger.h"
 
+#include <mutex>
+
 using std::get;
 using std::make_pair;
 using std::forward_as_tuple;
 using std::tie;
+using std::mutex;
+using std::lock_guard;
 
 string getThreadStatusName(ThreadStatus status) {
     switch (status) {
@@ -309,6 +313,15 @@ void UpdateEmbeddingsWorker::run() {
             pipeline_->max_batches_cv_->notify_one();
             pipeline_->edges_processed_ += batch->batch_size_;
             batch->clear();
+            mutex* m;
+            vector<Batch*>* v;
+            if (marius_options.general.device == torch::kCUDA) {
+                lock_guard<mutex> guard(((PipelineGPU*)pipeline_)->completed_batches_lock_);
+                ((PipelineCPU*)pipeline_)->completed_batches_.push_back(batch);
+            } else {
+                lock_guard<mutex> guard(((PipelineCPU*)pipeline_)->completed_batches_lock_);
+                ((PipelineGPU*)pipeline_)->completed_batches_.push_back(batch);
+            }
             SPDLOG_TRACE("Completed: {}", batch->batch_id_);
 
             int64_t num_batches_per_log = pipeline_->data_set_->getNumBatches() / marius_options.reporting.logs_per_epoch;

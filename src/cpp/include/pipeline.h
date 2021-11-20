@@ -227,6 +227,8 @@ class PipelineCPU : public Pipeline {
     Queue<Batch *> *prepped_batches_;
     Queue<Batch *> *unaccumulated_batches_;
     Queue<Batch *> *update_batches_;
+    std::mutex completed_batches_lock_;
+    vector<Batch*> completed_batches_;
 
     PipelineCPU(DataSet *data_set, Model *model, bool train, struct timespec report_time);
 
@@ -260,6 +262,8 @@ class PipelineGPU : public Pipeline {
     std::vector<Queue<Batch *> *> device_loaded_batches_; // multiple queues for multiple devices
     std::vector<Queue<Batch *> *> device_update_batches_; // multiple queues for multiple devices
     Queue<Batch *> *update_batches_;
+    std::mutex completed_batches_lock_;
+    vector<Batch*> completed_batches_;
 
     PipelineGPU(DataSet *data_set, Model *model, bool train, struct timespec report_time);
 
