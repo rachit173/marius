@@ -61,6 +61,7 @@ class WorkerNode {
       int partition_size_ = 10;
       int embedding_dims_ = 12;
       processed_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
+
     }
     void start_working(DataSet* trainset, DataSet* evalset, 
                         Trainer* trainer, Evaluator* evaluator, 
@@ -76,6 +77,7 @@ class WorkerNode {
         embeds_state_ = embeds_state;
         pb_embeds_ = embeds_->getPartitionBuffer();
         pb_embeds_state_ = embeds_state_->getPartitionBuffer();
+        pipeline_ = ((PipelineTrainer*)trainer_)->getPipeline();
       }
       // Need 
       // 1. Request partitions when below capacity.
@@ -314,6 +316,7 @@ class WorkerNode {
   DataSet* evalset_;
   Trainer* trainer_;
   Evaluator* evaluator_;
+  Pipeline* pipeline_;
   PartitionBufferStorage* embeds_;
   PartitionBufferStorage* embeds_state_;
   PartitionBuffer* pb_embeds_;

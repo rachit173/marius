@@ -19,7 +19,7 @@ class PipelineTrainer : public Trainer {
     Pipeline *pipeline_;
   public:
     PipelineTrainer(DataSet *data_set, Model *model);
-
+    Pipeline *getPipeline() { return pipeline_; }
     void train(int num_epochs = 1) override;
 };
 
