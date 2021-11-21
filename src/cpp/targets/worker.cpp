@@ -17,6 +17,8 @@
 #include <exception>
 #include <filesystem>
 
+#include <assert.h>
+
 
 #include <torch/torch.h>
 #include <c10d/FileStore.hpp>
@@ -55,13 +57,10 @@ class WorkerNode {
     rank_(rank),
     capacity_(capacity),
     num_partitions_(num_partitions),
-    num_workers_(num_workers) {
+    num_workers_(num_workers){
       coordinator_rank_ = num_workers_; 
       sleep_time_ = 100; // us
-      int partition_size_ = 10;
-      int embedding_dims_ = 12;
       processed_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
-
     }
     void start_working(DataSet* trainset, DataSet* evalset, 
                         Trainer* trainer, Evaluator* evaluator, 
@@ -78,6 +77,15 @@ class WorkerNode {
         pb_embeds_ = embeds_->getPartitionBuffer();
         pb_embeds_state_ = embeds_state_->getPartitionBuffer();
         pipeline_ = ((PipelineTrainer*)trainer_)->getPipeline();
+
+        // allocate memory for send and receive buffers
+        partition_size_ = pb_embeds_->getPartitionSize();
+        dtype_size_ = pb_embeds_->getDtypeSize();
+        embedding_size_ = pb_embeds_->getEmbeddingSize();
+        if(posix_memalign(&send_buffer, 4096, partition_size_ * embedding_size_ * dtype_size_)){
+          SPDLOG_ERROR("Error in allocating memory for send buffer");
+          exit(1);
+        }
       }
       // Need 
       // 1. Request partitions when below capacity.
@@ -117,7 +125,7 @@ class WorkerNode {
       }
     }
     PartitionMetadata RequestPartition() {
-      torch::Tensor tensor = torch::zeros({1}) + 1; // command is 1 for request partition.
+      torch::Tensor tensor = torch::zeros({3}) + 1; // command is 1 for request partition.
       std::vector<at::Tensor> tensors({tensor});
       auto send_work = pg_->send(tensors, coordinator_rank_, 0);
       if (send_work) {
@@ -158,7 +166,15 @@ class WorkerNode {
     bool sendPartition(const PartitionMetadata& part, int dstRank) {
       torch::Tensor tensor = part.ConvertToTensor();
       std::cout << "tensor to send " << tensor << std::endl;
-      std::vector<at::Tensor> tensors({tensor});
+      //////////// Testing code change//////////
+      torch::Tensor tensor1 = torch::zeros({3});
+      tensor1.data_ptr<float>()[0] = 2; // command
+      tensor1.data_ptr<float>()[1] = tensor.data_ptr<float>()[0];
+      tensor1.data_ptr<float>()[2] = tensor.data_ptr<float>()[1];
+      std::vector<at::Tensor> tensors({tensor1});
+      
+      SPDLOG_INFO("Dispatching partition {} to co-ordinator", part.idx);
+      //////////// Testing code change end//////////
       auto send_work = pg_->send(tensors, dstRank, 0);
       if (send_work) {
         send_work->wait();
@@ -168,6 +184,16 @@ class WorkerNode {
       return true;
     }
     void DispatchPartitionsToCoordinator() {
+      //////////// testing code: to be removed/////////////
+      std::this_thread::sleep_for(std::chrono::seconds(20));
+      int size = avail_parts_.size();
+      for(int i = 0; i < size; i++){
+        PartitionMetadata done_part = avail_parts_[i];
+        done_part.src = rank_;// transfer ownership of partition to self
+        dispatch_parts_.push(done_part);
+      }
+      avail_parts_.clear();
+      /////////////////////////////////////////////////////
       while (1) {
         while (1) {
           WriteLock w_lock(dispatch_parts_rw_mutex_);
@@ -227,17 +253,25 @@ class WorkerNode {
 
             //////////////////////////////Receive partition Data/////////////////////////////////////
             // Create Partition from metadata received
-            auto partition = Partition::ConvertToPartition(node_embed_tensors[0]);
+            Partition* partition = Partition::ConvertToPartition(node_embed_tensors[0]);
 
-            // Receive the tensor having data from the worker.
+            // Process: 1. Allocate memory for the receiving the incoming partition (posix_memalign)
+            // 2. Receive data into tensor, which points under the hood to the same allocated memory
+            // 3. Write the recvd partition to disk(partition file)
+            
             options = torch::TensorOptions().dtype(partition->dtype_);
-            posix_memalign(&(partition->data_ptr_), 4096, partition->partition_size_ * partition->embedding_size_ * partition->dtype_size_);
+            // 1. Allocate memory
+            if(posix_memalign(&(partition->data_ptr_), 4096, partition->partition_size_ * partition->embedding_size_ * partition->dtype_size_)){
+              SPDLOG_ERROR("Error in allocating memory to receive data");
+              exit(1);
+            }
             torch::Tensor tensor_data_recvd = torch::from_blob(partition->data_ptr_, {partition->partition_size_,partition->embedding_size_},partition->dtype_);
 
             // TODO: [Optimization]: class Single large space, any size of partition can be copied there
             // then directly use pwrite to copy to correct portion of node embeddings                                                   
             partition->tensor_ = tensor_data_recvd;
 
+            // 2. Receive the tensor having data from the worker.
             std::vector<torch::Tensor> tensors_data_recvd({tensor_data_recvd});
             // receive with tag 3
             tag++;
@@ -245,6 +279,12 @@ class WorkerNode {
             if (recv_data_work) {
               recv_data_work->wait();
             }
+            
+            // 3. Write fetched partition to partitioned file
+            PartitionBuffer *partition_buffer = pb_embeds_;
+            std::vector<Partition *> partition_table = partition_buffer->getPartitionTable();
+            PartitionedFile *partition_file = partition_buffer->getPartitionedFile();
+            partition_file->writePartition(partition);
           }
           ////////////////////////////////////////////////////////////////////////////////////
 
@@ -283,8 +323,9 @@ class WorkerNode {
         // Send partition with partition index 'part_idx'
 				float part_idx = tensors[0].data_ptr<float>()[0];
 
-				// TODO: Fix partition table index
-		  	std::vector<Partition*> partition_table = ((PartitionBufferStorage*)trainset_->getNodeEmbeddings())->getPartitionBuffer()->getPartitionTable();
+        PartitionBuffer* partition_buffer = pb_embeds_;
+		  	std::vector<Partition*> partition_table = partition_buffer->getPartitionTable();
+        PartitionedFile* partition_file = partition_buffer->getPartitionedFile();
 				torch::Tensor partition_metadata = partition_table[part_idx]->ConvertMetaDataToTensor();
 				std::vector<torch::Tensor> tensors_to_send({partition_metadata});
 
@@ -303,12 +344,14 @@ class WorkerNode {
         // Create simple class to access(read and write using offsets) underlying embeddings file
         // posix_memalign(&(partition_table[0]->data_ptr_), 4096, partition_table[0]->partition_size_ * partition_table[0]->embedding_size_ * partition_table[0]->dtype_size_);
 
-        if(!partition_table[part_idx]->data_ptr_) {
-          SPDLOG_WARN("Memory not allocated for partition id {}", part_idx);
-          continue;
-        }
+        // TODO: [Optimization] : Send from partition buffer if available instead of sending from disk
+        
+        // 1. Read partition from disk
+        // 2. Convert to tensor and send
+        partition_file->readPartition(send_buffer, partition_table[part_idx]);
+        assert(!partition_table[part_idx]->present_);
 
-				torch::Tensor tensor_data_to_send = partition_table[part_idx]->ConvertDataToTensor();
+        torch::Tensor tensor_data_to_send = partition_table[part_idx]->ConvertDataToTensor();
 				std::vector<torch::Tensor> tensors_data_to_send({tensor_data_to_send});
         // send metadata with tag 3
         tag++;
@@ -366,6 +409,8 @@ class WorkerNode {
   int capacity_;
   int coordinator_rank_;
   int sleep_time_;
+  void* send_buffer;
+  void* receive_buffer;
   mutable std::shared_mutex avail_parts_rw_mutex_;
   std::vector<PartitionMetadata> avail_parts_;
   mutable std::shared_mutex dispatch_parts_rw_mutex_;
@@ -377,7 +422,8 @@ class WorkerNode {
   std::vector<std::shared_ptr<torch::Tensor>> node_map;
   vector<vector<int>> processed_interactions_;
   int partition_size_;
-  int embedding_dims_;
+  int embedding_size_;
+  int dtype_size_;
   DataSet* trainset_;
   DataSet* evalset_;
   Trainer* trainer_;
@@ -408,7 +454,7 @@ int main(int argc, char* argv[]) {
     prefixstore, rank, world_size, options);
   int num_partitions = marius_options.storage.num_partitions;
   int capacity = marius_options.storage.buffer_capacity;
-  WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1);
+  WorkerNode worker(pg, rank, capacity, num_partitions, world_size - 1);
   std::string log_file = marius_options.general.experiment_name;
   MariusLogger marius_logger = MariusLogger(log_file);
   spdlog::set_default_logger(marius_logger.main_logger_);

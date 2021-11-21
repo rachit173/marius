@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <util.h>
+#include <assert.h>
 
 #include <functional>
 #include <future>
@@ -98,6 +99,7 @@ torch::Tensor Partition::ConvertMetaDataToTensor() {
 }
 
 torch::Tensor Partition::ConvertDataToTensor() {
+    assert(this->data_ptr_ != nullptr);
 	torch::Tensor serialized_data = torch::from_blob(data_ptr_, {partition_size_, embedding_size_}, dtype_);
 	return serialized_data;
 }

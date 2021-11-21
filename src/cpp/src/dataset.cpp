@@ -401,6 +401,7 @@ Batch *DataSet::nextBatchScaling() {
     std::unique_lock batch_lock(*batches_scaling_lock_);
     Batch *batch;
     if (batches_scaling_.empty()) {
+        SPDLOG_INFO("Returning null batches");
         return nullptr;
     }
     batch = batches_scaling_.front();

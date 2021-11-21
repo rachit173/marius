@@ -243,6 +243,26 @@ class PartitionBuffer {
         return partition_table_;
     }
 
+    PartitionedFile* getPartitionedFile(){
+        return partitioned_file_;
+    }
+
+    int64_t getPartitionSize(){
+        return partition_size_;
+    }
+
+    int getDtypeSize(){
+        return dtype_size_;
+    }
+
+    torch::Dtype getDtype(){
+        return dtype_;
+    }
+
+    int getEmbeddingSize(){
+      return embedding_size_;
+    }
+
     // Get Evictions
     std::vector<Batch *> shuffleBeforeEvictions(std::vector<Batch *> batches);
 
