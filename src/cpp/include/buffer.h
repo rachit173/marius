@@ -44,11 +44,13 @@ public:
     void indexAddAndDecrementUsage(Indices indices, torch::Tensor value);
 
     torch::Tensor indexRead(Indices indices);
-    // TODO(scaling)
-    torch::Tensor ConvertToTensor() { return torch::zeros({1}); }
-    // TODO(scaling)
-    static void ConvertToPartition(const torch::Tensor& tensor, Partition* out) {}
 
+    /////////////////////////// Scaling ///////////////////////////////////
+    torch::Tensor ConvertMetaDataToTensor();
+
+    torch::Tensor ConvertDataToTensor();
+
+    static std::unique_ptr<Partition> ConvertToPartition(const torch::Tensor &tensor);
 };
 
 class PartitionedFile {
@@ -234,6 +236,28 @@ class PartitionBuffer {
 
     int64_t getBufferEmbeddingsCapacity() {
         return capacity_ * partition_size_;
+    }
+    std::vector<Partition *>& getPartitionTable() {
+        return partition_table_;
+    }
+    PartitionedFile* getPartitionedFile(){
+        return partitioned_file_;
+    }
+
+    int64_t getPartitionSize(){
+        return partition_size_;
+    }
+
+    int getDtypeSize(){
+        return dtype_size_;
+    }
+
+    torch::Dtype getDtype(){
+        return dtype_;
+    }
+
+    int getEmbeddingSize(){
+      return embedding_size_;
     }
 
     // Get Evictions

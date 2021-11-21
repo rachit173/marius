@@ -6,6 +6,7 @@
 #include "model.h"
 #include "trainer.h"
 #include "util.h"
+#include "communication.h"
 
 #include <iostream>
 #include <vector>
@@ -31,7 +32,8 @@ class Coordinator {
     ):
     pg_(pg), 
     num_partitions_(num_partitions),
-    num_workers_(num_workers) {
+    num_workers_(num_workers),
+    tag_generator_(num_workers) {
       // setup
       for (int i = 0; i < num_partitions_; i++) {
         available_partitions_.push(PartitionMetadata(i, -1, num_partitions_));
@@ -45,8 +47,7 @@ class Coordinator {
         int command = tensors[0].data_ptr<float>()[0];
 
         int srcRank = -1;
-        int tag = 0;
-        auto recv_work = pg_->recvAnysource(tensors, tag);
+        auto recv_work = pg_->recvAnysource(tensors, tag_generator_.getCoordinatorCommandTag());
         if (recv_work) {
           recv_work->wait();
           srcRank = recv_work->sourceRank();
@@ -74,7 +75,7 @@ class Coordinator {
       const auto& tensor = part.ConvertToTensor();
       std::cout << "tensor to send - " << tensor << std::endl;
       std::vector<at::Tensor> tensors({tensor});
-      auto send_work = pg_->send(tensors, dstRank, 0);
+      auto send_work = pg_->send(tensors, dstRank, tag_generator_.getWorkerSpecificCommunicationTag(dstRank));
       if (send_work) {
         send_work->wait();
       } else {
@@ -95,7 +96,7 @@ class Coordinator {
     PartitionMetadata receivePartition(int srcRank) {
       torch::Tensor part_tensor = torch::zeros({num_partitions_+3});
       std::vector<at::Tensor> part_tensor_vec({part_tensor});
-      auto recv_work = pg_->recv(part_tensor_vec, srcRank, 0);
+      auto recv_work = pg_->recv(part_tensor_vec, srcRank, tag_generator_.getWorkerSpecificCommunicationTag(srcRank));
       if (recv_work) {
         recv_work->wait();
       }
@@ -109,6 +110,7 @@ class Coordinator {
   int num_partitions_;
   int num_workers_;
   std::queue<PartitionMetadata> available_partitions_;
+  CoordinatorTagGenerator tag_generator_;
 };
 
 
