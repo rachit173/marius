@@ -475,7 +475,7 @@ torch::Tensor PartitionBuffer::filterEvictedNegatives(std::vector<int> previous_
 }
 
 void PartitionBuffer::waitRead(int64_t access_id) {
-    if (marius_options.storage.prefetching) {
+    if (marius_options.storage.prefetching || marius_options.communication.prefix=="") {
         std::unique_lock access_lock(access_lock_);
         std::cout << std::endl;
         access_cv_.wait(access_lock, [this, access_id] { return access_id <= *admit_access_ids_itr_; });
@@ -485,7 +485,7 @@ void PartitionBuffer::waitRead(int64_t access_id) {
 }
 
 void PartitionBuffer::waitAdmit(int64_t access_id) {
-    if (marius_options.storage.prefetching) {
+    if (marius_options.storage.prefetching || marius_options.communication.prefix=="") {
         std::unique_lock access_lock(access_lock_);
         access_cv_.wait(access_lock, [this, access_id] { return (access_id == *admit_access_ids_itr_) && (accesses_before_admit_ == 0); });
         access_lock.unlock();
@@ -504,7 +504,7 @@ void PartitionBuffer::admitIfNotPresent(int64_t access_id, Partition *partition)
             admit_lock_.unlock();
         }
     }
-    if (marius_options.storage.prefetching) {
+    if (marius_options.storage.prefetching || marius_options.communication.prefix=="") {
         access_lock_.lock();
         accesses_before_admit_--;
         if (access_id % 2 == 0 && ordering_[access_id] == ordering_[access_id + 1]) {
@@ -608,7 +608,7 @@ void PartitionBuffer::admit(Partition *partition) {
     }
 
     size_++;
-    if (marius_options.storage.prefetching) {
+    if (marius_options.storage.prefetching || marius_options.communication.prefix=="") {
         access_lock_.lock();
         accesses_before_admit_ = *(admit_access_ids_itr_ + 1) - *admit_access_ids_itr_;
         admit_access_ids_itr_++;
