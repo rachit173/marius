@@ -34,7 +34,7 @@ class Coordinator {
     num_workers_(num_workers) {
       // setup
       for (int i = 0; i < num_partitions_; i++) {
-        available_partitions_.push_back(PartitionMetadata(i));
+        available_partitions_.push(PartitionMetadata(i, -1, num_partitions_));
       }
     }
     void start_working() {
@@ -58,9 +58,8 @@ class Coordinator {
           PartitionMetadata part = PartitionRequest(srcRank);
           if (part.idx != -1) sendPartition(part, srcRank);
         } else if (command == 2) {
-          PartitionReceive(srcRank);
-        } else if (command == 3) {
-
+          PartitionMetadata part = receivePartition(srcRank);
+          available_partitions_.push(part);
         } else {
           std::cout << "Received an invalid command: " << command << "\n";       
         }
@@ -70,9 +69,10 @@ class Coordinator {
 
     }
   private:
-    bool sendPartition(const PartitionMetadata& part, int dstRank) {
-      torch::Tensor tensor = part.ConvertToTensor();
-      std::cout << "tensor to send " << tensor << std::endl;
+    // TODO(scaling): Move to PartitionMetadata
+    bool sendPartition(PartitionMetadata part, int dstRank) {
+      const auto& tensor = part.ConvertToTensor();
+      std::cout << "tensor to send - " << tensor << std::endl;
       std::vector<at::Tensor> tensors({tensor});
       auto send_work = pg_->send(tensors, dstRank, 0);
       if (send_work) {
@@ -85,14 +85,22 @@ class Coordinator {
     PartitionMetadata PartitionRequest(int srcRank) {
       if (available_partitions_.empty()) {
         std::cout << "No part available" << std::endl;
-        return PartitionMetadata(-1);
+        return PartitionMetadata(-1, -1, num_partitions_);
       }
-      PartitionMetadata part = available_partitions_.back();
-      available_partitions_.pop_back();
+      PartitionMetadata part = available_partitions_.front();
+      available_partitions_.pop();
       return part;
     }
-    void PartitionReceive(int srcRank) {
-
+    // TODO(scaling): Move to PartitionMetadata
+    PartitionMetadata receivePartition(int srcRank) {
+      torch::Tensor part_tensor = torch::zeros({num_partitions_+3});
+      std::vector<at::Tensor> part_tensor_vec({part_tensor});
+      auto recv_work = pg_->recv(part_tensor_vec, srcRank, 0);
+      if (recv_work) {
+        recv_work->wait();
+      }
+      std::cout << "tensor received " << part_tensor_vec[0] << std::endl;
+      return PartitionMetadata::ConvertToPartition(part_tensor_vec[0]);
     }
 
 
@@ -100,7 +108,7 @@ class Coordinator {
   std::shared_ptr<c10d::ProcessGroupGloo> pg_;
   int num_partitions_;
   int num_workers_;
-  std::vector<PartitionMetadata> available_partitions_;
+  std::queue<PartitionMetadata> available_partitions_;
 };
 
 
@@ -121,7 +129,7 @@ int main(int argc, char* argv[]) {
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
     prefixstore, rank, world_size, options);
-  int num_partitions = 8;
+  int num_partitions = marius_options.storage.num_partitions;
   Coordinator coordinator(pg, num_partitions, world_size-1);
   coordinator.start_working();
   coordinator.stop_working();
