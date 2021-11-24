@@ -95,22 +95,18 @@ class WorkerNode {
       }
       // Need 
       // 1. Request partitions when below capacity.
-      // 2. Dispatch partitions
+      // 2. Mark partitions when training done and dispatch partition metadata to co-ordinator
       // 3. Transfer partitions to other workers
+      // 4. Run actual training
       threads_.emplace_back(std::thread([&](){
         this->RequestPartitions();
       }));
       threads_.emplace_back(std::thread([&](){
-        this->DispatchPartitionsToCoordinator();
+        this->ProcessPartitions();
       }));
-      threads_.emplace_back(std::thread([&](){
-        this->TransferPartitionsFromWorkerNodes();
-      }));
+      
       threads_.emplace_back(std::thread([&](){
         this->TransferPartitionsToWorkerNodes();
-      }));
-      threads_.emplace_back(std::thread([&](){
-        this->ProcessPartitions();
       }));
       threads_.emplace_back(std::thread([&](){
         this->RunTrainer();
@@ -130,6 +126,7 @@ class WorkerNode {
         }
       }
     }
+    
     // TODO(scaling): Move parts to PartitionMetadata
     PartitionMetadata receivePartition(int srcRank) {
       torch::Tensor tensor = torch::zeros({1}) + 1; // command is 1 for request partition.
@@ -148,27 +145,31 @@ class WorkerNode {
       }
       return PartitionMetadata::ConvertToPartition(part_tensor_vec[0]);
     }
+
+    int getSize(){
+      ReadLock r_lock(avail_parts_rw_mutex_);
+      int size = avail_parts_.size();
+      r_lock.unlock();
+      return size;
+    }
+
     void RequestPartitions() {
       while (1) {
-        // if ()
-        int size;
-        {
-          ReadLock r_lock(avail_parts_rw_mutex_);
-          size = avail_parts_.size() + transfer_receive_parts_.size();
-        }
+        int size = getSize();
         while (size < capacity_) {
           std::cout << size << " " << capacity_ << std::endl;
           PartitionMetadata p = receivePartition(coordinator_rank_);
-          std::cout << "Received partition: " << p.idx << " " << p.src << std::endl;
-          {
-            WriteLock w_lock(transfer_receive_parts_rw_mutex_);
-            transfer_receive_parts_.push(p);
-          }
-          size++;
+          SPDLOG_INFO("Received partition metadata from co-ordinator: {} {}", p.idx, p.src);
+          
+          TransferPartitionsFromWorkerNodes(p);
+          ProcessNewPartition();
+          size = getSize();
         }
-        std::this_thread::sleep_for(std::chrono::microseconds(sleep_time_)); // TODO(rrt): reduce this later;
+        // Increase the sleep time to reduce lock contention for avail_parts_rw_mutex_
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time_)); // TODO(rrt): reduce this later;
       }
     }
+
     // TODO(scaling): Move to PartitionMetadata
     bool sendPartition(PartitionMetadata part, int dstRank) {
       torch::Tensor tensor = part.ConvertToTensor();
@@ -182,114 +183,108 @@ class WorkerNode {
       }
       return true;
     }
-    void DispatchPartitionsToCoordinator() {
-      while (1) {
-        while (1) {
-          PartitionMetadata part(-1, -1, num_partitions_);
-          {
-            WriteLock w_lock(dispatch_parts_rw_mutex_);
-            if (dispatch_parts_.empty()) break;
-            part = dispatch_parts_.front();
-            dispatch_parts_.pop();
-          }
-          torch::Tensor tensor = torch::zeros({1}) + 2; // command is 2 for dispatch partition.
-          std::vector<at::Tensor> tensors({tensor});
-          auto send_work = pg_->send(tensors, coordinator_rank_, tag_generator_.getCoordinatorCommandTag());
-          if (send_work) {
-            send_work->wait();
-          }
-          part.src = rank_;
-          sendPartition(part, coordinator_rank_);      
-        }
-        // TODO: all sleep based code can be converted to conditional
-        // variable.
-        std::this_thread::sleep_for(std::chrono::microseconds(sleep_time_)); // TODO(rrt): reduce this later;
+    
+    void DispatchPartitionsToCoordinator(PartitionMetadata part) {
+      torch::Tensor tensor = torch::zeros({1}) + 2; // command is 2 for dispatch partition.
+      std::vector<at::Tensor> tensors({tensor});
+      auto send_work = pg_->send(tensors, coordinator_rank_, tag_generator_.getCoordinatorCommandTag());
+      if (send_work) {
+        send_work->wait();
       }
+      part.src = rank_;
+      sendPartition(part, coordinator_rank_);      
     }
-    void fetchFromStorage(int part_num) {}
-    void TransferPartitionsFromWorkerNodes() {
-      while (1) {
-        {
-          while (1) {
-            PartitionMetadata part(-1, -1, num_partitions_);
-            {
-              WriteLock w_lock(transfer_receive_parts_rw_mutex_);
-              if (transfer_receive_parts_.empty()) break;
-              part  = transfer_receive_parts_.front();
-            }
-            std::cout << "Getting partition " << part.idx << " from " << part.src << std::endl; 
-            if (part.src == -1) {
-              // Already have the partition.
-              fetchFromStorage(part.idx);
-            } else if (part.src == rank_) {
-              // Already have the partition.
-            } else {
-              // ask the other worker for the partition
-              torch::Tensor request = torch::zeros({1}) + part.idx;
-              std::vector<at::Tensor> request_tensors({request});
-              auto send_work = pg_->send(request_tensors, part.src, tag_generator_.getTagWhenRequesterCommandPath(part.src));
-              if (send_work) {
-                send_work->wait();
-              }
-              // Receive metadata
-              auto options = torch::TensorOptions().dtype(torch::kInt64);
-              torch::Tensor node_embed_tensor = torch::zeros({1, 5}, options);
-              std::vector<torch::Tensor> node_embed_tensors({node_embed_tensor});
-              auto recv_work = pg_->recv(node_embed_tensors, part.src, tag_generator_.getTagWhenRequesterDataPath(part.src));
-              if (recv_work) {
-                recv_work->wait();
-              }
-              // Create Partition from metadata received
-              auto partition = Partition::ConvertToPartition(node_embed_tensors[0]);
 
-              // Process: 
-              // 1. Allocate memory for the receiving the incoming partition (posix_memalign)
-              // 2. Receive data into tensor, which points under the hood to the same allocated memory
-              // 3. Write the recvd partition to disk(partition file)
-              
-              // Receive partition data
-              options = torch::TensorOptions().dtype(partition->dtype_);
-              // 1. Allocate memory
-              if(posix_memalign(&(partition->data_ptr_), 4096, partition->partition_size_ * partition->embedding_size_ * partition->dtype_size_)){
-                SPDLOG_ERROR("Error in allocating memory to receive data");
-                exit(1);
-              }
-              torch::Tensor tensor_data_recvd = torch::from_blob(partition->data_ptr_, {partition->partition_size_,partition->embedding_size_},partition->dtype_);              
-              // TODO: [Optimization]: class Single large space, any size of partition can be copied there
-              // then directly use pwrite to copy to correct portion of node embeddings                                                   
-              partition->tensor_ = tensor_data_recvd;
-              
-              // 2. Receive the tensor having data from the worker.
-              std::vector<torch::Tensor> tensors_data_recvd({tensor_data_recvd});
-              auto recv_data_work = pg_->recv(tensors_data_recvd, part.src, tag_generator_.getTagWhenRequesterDataPath(part.src));
-              if (recv_data_work) {
-                recv_data_work->wait();
-              }
-
-              // 3. Write fetched partition to partitioned file.
-              PartitionBuffer *partition_buffer = pb_embeds_;
-              std::vector<Partition *>& partition_table = partition_buffer->getPartitionTable();
-              PartitionedFile *partition_file = partition_buffer->getPartitionedFile();
-              partition_file->writePartition(partition.get());
-            }
-            // Add the received partitions to avail_parts_ vector.
-            {
-              WriteLock w_lock(avail_parts_rw_mutex_);
-              std::cout << "Pushed to avail parts: " << part.idx << std::endl;
-              avail_parts_.push_back(part);
-            }
-            {
-              WriteLock w_lock(transfer_receive_parts_rw_mutex_);
-              assert(!transfer_receive_parts_.empty());
-              transfer_receive_parts_.pop();
-            }
-          }
-          // TODO(rrt): convert this to conditional code.
-          std::this_thread::sleep_for(std::chrono::microseconds(sleep_time_)); // TODO(rrt): reduce this later;
+    void TransferPartitionsFromWorkerNodes(PartitionMetadata part) {
+      if (part.src == -1) {
+        // Already have the partition.
+      } else if (part.src == rank_) {
+        // Already have the partition.
+      } else {
+        // ask the other worker for the partition
+        torch::Tensor request = torch::zeros({1}) + part.idx;
+        std::vector<at::Tensor> request_tensors({request});
+        auto send_work = pg_->send(request_tensors, part.src, tag_generator_.getTagWhenRequesterCommandPath(part.src));
+        if (send_work) {
+          send_work->wait();
         }
+        // Receive metadata
+        auto options = torch::TensorOptions().dtype(torch::kInt64);
+        torch::Tensor node_embed_tensor = torch::zeros({1, 5}, options);
+        std::vector<torch::Tensor> node_embed_tensors({node_embed_tensor});
+        auto recv_work = pg_->recv(node_embed_tensors, part.src, tag_generator_.getTagWhenRequesterDataPath(part.src));
+        if (recv_work) {
+          recv_work->wait();
+        }
+        // Create Partition from metadata received
+        auto partition = Partition::ConvertToPartition(node_embed_tensors[0]);
+
+        // Process: 
+        // 1. Allocate memory for the receiving the incoming partition (posix_memalign)
+        // 2. Receive data into tensor, which points under the hood to the same allocated memory
+        // 3. Write the recvd partition to disk(partition file)
         
+        // Receive partition data
+        options = torch::TensorOptions().dtype(partition->dtype_);
+        // 1. Allocate memory
+        if(posix_memalign(&(partition->data_ptr_), 4096, partition->partition_size_ * partition->embedding_size_ * partition->dtype_size_)){
+          SPDLOG_ERROR("Error in allocating memory to receive data");
+          exit(1);
+        }
+        torch::Tensor tensor_data_recvd = torch::from_blob(partition->data_ptr_, {partition->partition_size_,partition->embedding_size_},partition->dtype_);              
+        // TODO: [Optimization]: class Single large space, any size of partition can be copied there
+        // then directly use pwrite to copy to correct portion of node embeddings                                                   
+        partition->tensor_ = tensor_data_recvd;
+        
+        // 2. Receive the tensor having data from the worker.
+        std::vector<torch::Tensor> tensors_data_recvd({tensor_data_recvd});
+        auto recv_data_work = pg_->recv(tensors_data_recvd, part.src, tag_generator_.getTagWhenRequesterDataPath(part.src));
+        if (recv_data_work) {
+          recv_data_work->wait();
+        }
+
+        // 3. Write fetched partition to partitioned file.
+        PartitionBuffer *partition_buffer = pb_embeds_;
+        std::vector<Partition *>& partition_table = partition_buffer->getPartitionTable();
+        PartitionedFile *partition_file = partition_buffer->getPartitionedFile();
+        partition_file->writePartition(partition.get());
+      }
+      // Add the received partitions to avail_parts_ vector.
+      {
+        WriteLock w_lock(avail_parts_rw_mutex_);
+        SPDLOG_INFO("Pushed to avail parts: {}", part.idx);
+        avail_parts_.push_back(part);
       }
     }
+
+    void ProcessNewPartition() {
+      // Acquire lock on avail parts and add new batches to be processed to the dataset queue
+      std::vector<pair<int, int>> interactions;
+      ReadLock r_lock(avail_parts_rw_mutex_);
+
+      for (const auto &pi : avail_parts_) {
+        for (const auto &pj : avail_parts_) {
+          if (processed_interactions_[pi.idx][pj.idx] == 0) {
+            interactions.push_back({pi.idx, pj.idx});
+            processed_interactions_[pi.idx][pj.idx] = 1;
+          }
+        }
+      }
+      r_lock.unlock();
+
+      if (interactions.size() > 0) { 
+        SPDLOG_INFO("Generated {} interactions", interactions.size());
+      }
+      for (auto interaction: interactions) {
+        int src = interaction.first;
+        int dst = interaction.second;
+        // Add batch to dataset batches queue. 
+        trainset_->addBatchScaling(src, dst);
+        SPDLOG_INFO("Pushed ({}, {}) to dataset queue", src, dst);
+      }
+    }
+
+    
     void TransferPartitionsToWorkerNodes() {
       // Receive the request and transfer the partition from the node map
       while (1) {
@@ -329,25 +324,21 @@ class WorkerNode {
         }
       }
     }
+    
     void ProcessPartitions() {
       // Generate interactions to be processed.
       // @TODO(scaling): Implement optimal strategies.
       // The strategy computation is expected to be fast and thus we can hold locks
       while (1) {
-        std::vector<pair<int, int>> interactions;
         std::vector<PartitionMetadata> partitions_done;
         {
-          WriteLock r_lock(avail_parts_rw_mutex_);
-          for (const auto& pi : avail_parts_) {
-            for (const auto& pj : avail_parts_) {
-              if (processed_interactions_[pi.idx][pj.idx] == 0) {
-                interactions.push_back({pi.idx, pj.idx});
-                processed_interactions_[pi.idx][pj.idx] = 1;
-              }
-            }
-          }
+          // Lock contention possible as acquired every iteration by this function as well as RequestPartitions
           int num_batches_processed = pipeline_->getCompletedBatchesSize();
-          if (avail_parts_.size() == capacity_) {
+          ReadLock r_lock(avail_parts_rw_mutex_);
+          int size = avail_parts_.size();
+          r_lock.unlock();
+
+          if (size == capacity_) {
             for (int i = 0; i < num_batches_processed; i++) {
               PartitionBatch* batch = (PartitionBatch*)pipeline_->completed_batches_[i];
               int src_idx = batch->src_partition_idx_;
@@ -358,11 +349,16 @@ class WorkerNode {
               }
             }
           }
+
+          r_lock.lock();
+          int avail_parts_size = avail_parts_.size();
+          r_lock.unlock();
+
           std::vector<PartitionMetadata> avail_parts_replacement;
-          for (int i = 0; i < avail_parts_.size(); i++) {
+          for (int i = 0; i < avail_parts_size; i++) {
             bool done = true;
             const auto& pi = avail_parts_[i];
-            for (int j = 0; j < avail_parts_.size(); j++) {
+            for (int j = 0; j < avail_parts_size; j++) {
               const auto& pj = avail_parts_[j];
               if (!trained_interactions_[pi.idx][pj.idx]) { done = false; break; }
               if (!trained_interactions_[pj.idx][pi.idx]) { done = false; break; }
@@ -373,25 +369,33 @@ class WorkerNode {
               avail_parts_replacement.push_back(pi);
             }
           }
+
+          WriteLock w_lock(avail_parts_rw_mutex_);
+          if(avail_parts_.size() != avail_parts_replacement.size()){
+            SPDLOG_INFO("Available parts changed...");
+            std::cout << "Old available parts:" << std::endl;
+            for(int i = 0; i < avail_parts_.size(); i++)std::cout << avail_parts_[i].idx << ", ";
+            std::cout << std::endl;
+
+            std::cout << "New available parts:" << std::endl;
+            for (int i = 0; i < avail_parts_replacement.size(); i++)
+              std::cout << avail_parts_replacement[i].idx << ", ";
+            std::cout << std::endl;
+          }
           avail_parts_ = avail_parts_replacement;
+          w_lock.unlock();
         }
         for (auto p : partitions_done) {
-          WriteLock w_lock(dispatch_parts_rw_mutex_);
-          dispatch_parts_.push(p);
-        }
-        if (interactions.size() > 0) std::cout << "Generated Interaction vector " << interactions.size() << std::endl;
-        for (auto interaction: interactions) {
-          int src = interaction.first;
-          int dst = interaction.second;
-          // Add batch to dataset batches queue. 
-          trainset_->addBatchScaling(src, dst);
-          std::cout << "Pushed (" << src << ", " << dst << ") to dataset queue" << std::endl;
+          SPDLOG_INFO("Dispatching partition {} to co-ordinator..", p.idx);
+          DispatchPartitionsToCoordinator(p);
         }
         // sleep
+        // Increase sleep time to reduce contention for lock
         // TODO(rrt): Replace this by a condition variable.
-        std::this_thread::sleep_for(std::chrono::microseconds(sleep_time_));
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time_));
       }
     }
+    
     void RunTrainer() {
       int num_epochs = 1;
       trainer_->train(num_epochs);
