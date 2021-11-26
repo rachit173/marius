@@ -35,11 +35,11 @@ class Coordinator {
     num_workers_(num_workers),
     tag_generator_(num_workers) {
       // setup
-      available_partitions_.resize(num_workers_ + 1, vector<PartitionMetadata>(num_partitions_));
+      available_partitions_.resize(num_workers_ + 1);
       in_process_partitions_.resize(num_workers_, vector<int>(num_partitions_, 0));
       processed_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
       for (int i = 0; i < num_partitions_; i++) {
-        available_partitions_[num_workers_][i] = PartitionMetadata(i, -1, num_partitions_);
+        available_partitions_[num_workers_].push_back(PartitionMetadata(i, -1, num_partitions_));
       }
     }
     void start_working() {
@@ -154,7 +154,7 @@ class Coordinator {
   std::shared_ptr<c10d::ProcessGroupGloo> pg_;
   int num_partitions_;
   int num_workers_;
-  std::vector<vector<int>> available_partitions_;
+  std::vector<vector<PartitionMetadata>> available_partitions_;
   std::vector<vector<int>> in_process_partitions_;
   std::vector<vector<int>> processed_interactions_;
   CoordinatorTagGenerator tag_generator_;
