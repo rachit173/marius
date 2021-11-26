@@ -35,11 +35,11 @@ class Coordinator {
     num_workers_(num_workers),
     tag_generator_(num_workers) {
       // setup
-      available_partitions_.resize(num_workers_ + 1);
+      available_partitions_.resize(num_workers_ + 1, vector<PartitionMetadata>(num_partitions_));
       in_process_partitions_.resize(num_workers_, vector<int>(num_partitions_, 0));
       processed_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
       for (int i = 0; i < num_partitions_; i++) {
-        available_partitions_[num_workers_].push_back(PartitionMetadata(i, -1, num_partitions_));
+        available_partitions_[num_workers_][i] = PartitionMetadata(i, -1, num_partitions_);
       }
     }
     void start_working() {
@@ -56,7 +56,7 @@ class Coordinator {
           recv_work->wait();
           srcRank = recv_work->sourceRank();
         }
-        std::cout << "Received " << tensors[0] << " from " << srcRank << std::endl;
+        // std::cout << "Received " << tensors[0] << " from " << srcRank << std::endl;
         command = tensors[0].data_ptr<float>()[0];
         std::cout << "Command: " << command << std::endl;
         if (command == 1) {
@@ -92,12 +92,27 @@ class Coordinator {
           std::cout << "(" << available_partitions_[i][j].idx << "," << available_partitions_[i][j].src << "), ";
         }
         std::cout << std::endl;
+        std::cout << "Processed Interactions: " << std::endl;
+        for(int i = 0; i < num_partitions_; i++){
+          for(int j = 0; j < num_partitions_; j++){
+            std::cout << processed_interactions_[i][j] << " ";
+          }
+          std::cout << std::endl;
+        }
+
+        std::cout << "In-process partitions: " << std::endl;
+        for(int i = 0; i < num_workers_; i++){
+          for(int j = 0; j < num_partitions_; j++){
+            std::cout << in_process_partitions_[i][j] << " ";
+          }
+          std::cout << std::endl;
+        }
       }
     }
+    
     // TODO(scaling): Move to PartitionMetadata
     bool sendPartition(PartitionMetadata part, int dstRank) {
       const auto& tensor = part.ConvertToTensor();
-      std::cout << "tensor to send - " << tensor << std::endl;
       std::vector<at::Tensor> tensors({tensor});
       auto send_work = pg_->send(tensors, dstRank, tag_generator_.getWorkerSpecificCommunicationTag(dstRank));
       if (send_work) {
@@ -107,6 +122,7 @@ class Coordinator {
       }
       return true;
     }
+    
     PartitionMetadata PartitionRequest(int srcRank) {
       for(int i = num_workers_; i >=0; i--){
         if(i == srcRank) continue;
@@ -138,7 +154,7 @@ class Coordinator {
   std::shared_ptr<c10d::ProcessGroupGloo> pg_;
   int num_partitions_;
   int num_workers_;
-  std::vector<vector<PartitionMetadata>> available_partitions_;
+  std::vector<vector<int>> available_partitions_;
   std::vector<vector<int>> in_process_partitions_;
   std::vector<vector<int>> processed_interactions_;
   CoordinatorTagGenerator tag_generator_;
@@ -155,7 +171,7 @@ int main(int argc, char* argv[]) {
   auto filestore = c10::make_intrusive<c10d::FileStore>("./rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
 
-  std::chrono::milliseconds timeout(100000);
+  std::chrono::milliseconds timeout(10000000);
   auto options = c10d::ProcessGroupGloo::Options::create();
   options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
   options->timeout = timeout;

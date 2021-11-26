@@ -156,7 +156,7 @@ class WorkerNode {
     void RequestPartitions() {
       while (1) {
         int size = getSize();
-        SPDLOG_INFO("Number of elements in available partitions: {}", size);
+        // SPDLOG_INFO("Number of elements in available partitions: {}", size);
         while (size < capacity_) {
           std::cout << size << " " << capacity_ << std::endl;
           PartitionMetadata p = receivePartition(coordinator_rank_);
@@ -209,6 +209,7 @@ class WorkerNode {
       SPDLOG_INFO("Dispatched partition {}", part.idx);
 
       pb_embeds_->addPartitionForEviction(part.idx);
+      pb_embeds_state_->addPartitionForEviction(part.idx);
     }
 
     void TransferPartitionsFromWorkerNodes(PartitionMetadata part) {
@@ -264,6 +265,8 @@ class WorkerNode {
         std::vector<Partition *>& partition_table = partition_buffer->getPartitionTable();
         PartitionedFile *partition_file = partition_buffer->getPartitionedFile();
         partition_file->writePartition(partition.get());
+
+        //4. TODO: Receive optimizer state partition and write it to its own partitioned file
       }
       // Add the received partitions to avail_parts_ vector.
       {
@@ -360,7 +363,7 @@ class WorkerNode {
           WriteLock w_lock(avail_parts_rw_mutex_);
           int num_batches_processed = pipeline_->getCompletedBatchesSize();
           int size = avail_parts_.size();
-          SPDLOG_INFO("Size of available partitions: {}", size);
+          // SPDLOG_INFO("Size of available partitions: {}", size);
 
           if (size == capacity_) {
             for (int i = 0; i < num_batches_processed; i++) {
@@ -471,7 +474,7 @@ int main(int argc, char* argv[]) {
   auto filestore = c10::make_intrusive<c10d::FileStore>("./rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
   // auto dev = c10d::GlooDeviceFactory::makeDeviceForInterface("lo");
-  std::chrono::milliseconds timeout(100000);
+  std::chrono::milliseconds timeout(10000000);
   auto options = c10d::ProcessGroupGloo::Options::create();
   options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
   options->timeout = timeout;

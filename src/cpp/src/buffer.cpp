@@ -497,9 +497,11 @@ void PartitionBuffer::waitAdmit(int64_t access_id) {
 void PartitionBuffer::admitIfNotPresent(int64_t access_id, Partition *partition) {
     waitRead(access_id);
     assert(loaded_);
+    SPDLOG_TRACE("AdmitIfNotPresent called for partition {}", partition->partition_id_);
     if (!partition->checkPresentAndIncrementUsage()) {
         waitAdmit(access_id);
         if (!partition->present_) {
+            SPDLOG_TRACE("Admit called for partition {}", partition->partition_id_);
             admit_lock_.lock();
             admit(partition);
             admit_lock_.unlock();
@@ -590,6 +592,7 @@ void PartitionBuffer::admit(Partition *partition) {
     SPDLOG_TRACE("Admitting {}", partition->partition_id_);
     if (free_list_.empty()) {
         // Partition *partition_to_evict = partition_table_[*evict_ids_itr_++];
+        SPDLOG_TRACE("Waiting for evict partitions....");
         Partition *partition_to_evict = std::get<1>(evict_partitions_->blocking_pop());
         SPDLOG_TRACE("Evicting {}", partition_to_evict->partition_id_);
         evict(partition_to_evict);
@@ -597,6 +600,7 @@ void PartitionBuffer::admit(Partition *partition) {
         SPDLOG_TRACE("Evicted {}", partition_to_evict->partition_id_);
     }
     buffer_idx = free_list_.front();
+    SPDLOG_TRACE("Buffer index {}", buffer_idx);
     free_list_.pop();
 
     void *buff_addr = (char *) buff_mem_ + (buffer_idx * partition_size_ * embedding_size_ * dtype_size_);
@@ -609,13 +613,16 @@ void PartitionBuffer::admit(Partition *partition) {
         }
         lookahead_block_->move_to_buffer(buff_addr, buffer_idx, next_partition);
     } else {
+        SPDLOG_TRACE("Acquiring Lock...");
         partition->lock_->lock();
+        SPDLOG_TRACE("Acquired partition Lock...");
         partitioned_file_->readPartition(buff_addr, partition);
         partition->present_ = true;
         partition->buffer_idx_ = buffer_idx;
         partition->lock_->unlock();
     }
 
+    SPDLOG_TRACE("Read partition and put to buffer");
     size_++;
     if (marius_options.storage.prefetching || marius_options.communication.prefix=="") {
         access_lock_.lock();

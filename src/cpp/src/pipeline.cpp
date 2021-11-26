@@ -40,7 +40,7 @@ void LoadEmbeddingsWorker::run() {
         while (!*paused_) {
             *status_ = ThreadStatus::WaitPop;
             std::unique_lock lock(*pipeline_->max_batches_lock_);
-            SPDLOG_WARN("In-flight batches: {}, Admitted batches: {}", pipeline_->batches_in_flight_, pipeline_->admitted_batches_);
+            SPDLOG_INFO("In-flight batches: {}, Admitted batches: {}", pipeline_->batches_in_flight_, pipeline_->admitted_batches_);
             if ((pipeline_->batches_in_flight_ < pipeline_->max_batches_in_flight_) && pipeline_->admitted_batches_ < pipeline_->data_set_->getNumBatches()) {
                 pipeline_->admitted_batches_++;
                 pipeline_->batches_in_flight_++;
@@ -53,7 +53,7 @@ void LoadEmbeddingsWorker::run() {
                 // Thus, the pipeline does not require much change
                 // as long as it can get the correct next batch from
                 // the call getBatch().
-                SPDLOG_WARN("Getting Batch....");
+                SPDLOG_INFO("Getting Batch....");
                 Batch* batch;
                 if (marius_options.communication.prefix == "") {
                     batch = pipeline_->data_set_->getBatch();
@@ -65,10 +65,10 @@ void LoadEmbeddingsWorker::run() {
                 if (batch == nullptr) {
                     break;
                 }
-                SPDLOG_WARN("Got Batch with partitions: ({}, {})", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
+                SPDLOG_INFO("Got Batch with partitions: ({}, {})", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
 
                 batch->timer_.start();
-                SPDLOG_WARN("Admitting Batch: {}", batch->batch_id_);
+                SPDLOG_INFO("Admitting Batch: {}", batch->batch_id_);
 
                 Queue<Batch *> *push_queue = ((PipelineCPU *) pipeline_)->loaded_batches_;
                 if (marius_options.general.device == torch::kCUDA) {
@@ -78,10 +78,10 @@ void LoadEmbeddingsWorker::run() {
                 push_queue->blocking_push(batch);
             } else {
                 // wait until we can try to grab a batch again
-                SPDLOG_WARN("Wait until we can try to grab a batch again");
+                SPDLOG_INFO("Wait until we can try to grab a batch again");
                 pipeline_->max_batches_cv_->wait(lock);
                 lock.unlock();
-                SPDLOG_WARN("Woken up from sleep");
+                SPDLOG_INFO("Woken up from sleep");
             }
         }
         *status_ = ThreadStatus::Paused;
