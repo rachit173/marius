@@ -3,7 +3,7 @@
 //
 
 #include "dataset.h"
-
+#include "channel.h"
 #include "ordering.h"
 
 #include<iostream>
@@ -19,6 +19,7 @@ DataSet::DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storag
     current_negative_id_ = 0;
     epochs_processed_ = 0;
     batches_processed_ = 0;
+    batches_scaling_ = new Queue<Batch *>(10);
     batch_lock_ = new std::mutex();
     batches_scaling_lock_ = new std::mutex();
     negative_lock_ = new std::mutex();
@@ -356,6 +357,7 @@ Batch *DataSet::getBatch() {
 Batch *DataSet::getBatchScaling() {
     Batch *batch = nextBatchScaling();
     if (batch == nullptr) {
+        SPDLOG_ERROR("Batch is NULL. Should not reach here!!");
         return batch;
     }
 
@@ -391,20 +393,18 @@ void DataSet::addBatchScaling(int src, int dst) {
     }
     // Add the batch to batches_scaling queue
     {
-        std::unique_lock batch_lock(*batches_scaling_lock_);
-        batches_scaling_.push(batch);
+        // std::unique_lock batch_lock(*batches_scaling_lock_);
+        batches_scaling_->blocking_push(batch);
+        SPDLOG_INFO("Pushed batch with src {} and dst {} into queue", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
     }
 }
 
 // TODO(scaling): use batches_scaling_ queue and batches_scaling_ lock
 Batch *DataSet::nextBatchScaling() {
-    std::unique_lock batch_lock(*batches_scaling_lock_);
-    Batch *batch;
-    if (batches_scaling_.empty()) {
-        return nullptr;
-    }
-    batch = batches_scaling_.front();
-    batches_scaling_.pop();
+    SPDLOG_INFO("Called NextBatchScaling... Waiting for popping element from queue");
+    Batch *batch = get<1>(batches_scaling_->blocking_pop());
+    SPDLOG_INFO("Got next batch from queue: ({}, {})", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
+
     current_edge_ += batch->batch_size_;
     return batch;
 }

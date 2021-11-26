@@ -16,7 +16,6 @@
 #include "config.h"
 #include "logger.h"
 
-
 Partition::Partition(int partition_id, int64_t partition_size, int embedding_size, torch::Dtype dtype, int64_t idx_offset, int64_t file_offset) {
 
     lock_ = new std::mutex();
@@ -350,6 +349,8 @@ PartitionBuffer::PartitionBuffer(int capacity, int num_partitions, int64_t parti
         dtype_size_ = 4;
     }
 
+    evict_partitions_ = new Queue<Partition *>(10); // TODO: Change size to some appropriate value
+
     embedding_size_ = embedding_size;
     total_embeddings_ = total_embeddings;
     filename_ = filename;
@@ -575,6 +576,12 @@ void PartitionBuffer::evict(Partition *partition) {
     free_list_.push(partition->buffer_idx_);
 }
 
+void PartitionBuffer::addPartitionForEviction(int partition_id) {
+    SPDLOG_INFO("Adding partition {} to eviction queue", partition_id);
+    evict_partitions_->blocking_push(partition_table_[partition_id]);
+    SPDLOG_INFO("Added partition {} to eviction queue", partition_id);
+}
+
 // TODO(scaling): admit method is used to add a node partition 
 // to the partition buffer.
 void PartitionBuffer::admit(Partition *partition) {
@@ -582,7 +589,8 @@ void PartitionBuffer::admit(Partition *partition) {
     int64_t buffer_idx;
     SPDLOG_TRACE("Admitting {}", partition->partition_id_);
     if (free_list_.empty()) {
-        Partition *partition_to_evict = partition_table_[*evict_ids_itr_++];
+        // Partition *partition_to_evict = partition_table_[*evict_ids_itr_++];
+        Partition *partition_to_evict = std::get<1>(evict_partitions_->blocking_pop());
         SPDLOG_TRACE("Evicting {}", partition_to_evict->partition_id_);
         evict(partition_to_evict);
         size_--;
@@ -593,6 +601,7 @@ void PartitionBuffer::admit(Partition *partition) {
 
     void *buff_addr = (char *) buff_mem_ + (buffer_idx * partition_size_ * embedding_size_ * dtype_size_);
 
+    // TODO: Deal with prefetching
     if (marius_options.storage.prefetching) {
         Partition *next_partition = nullptr;
         if (admit_ids_itr_ != admit_ids_.end()) {

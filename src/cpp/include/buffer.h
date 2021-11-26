@@ -7,6 +7,7 @@
 
 #include "batch.h"
 #include "datatypes.h"
+#include "channel.h"
 
 // TODO(scaling)
 // 1. Serialize/Deserialize for transport over network.
@@ -149,6 +150,7 @@ class PartitionBuffer {
     torch::Tensor buffer_tensor_view_;
     std::vector<Partition *> partition_table_;
     std::queue<int> free_list_;
+    Queue<Partition *> *evict_partitions_;
 
     bool prefetching_;
     LookaheadBlock *lookahead_block_;
@@ -213,6 +215,8 @@ class PartitionBuffer {
     void bufferIndexAdd(std::vector<int> buffer_state, torch::Tensor indices, torch::Tensor values);
 
     std::tuple<std::vector<int>, torch::Tensor> bufferIndexRead(torch::Tensor indices);
+
+    void addPartitionForEviction(int partition_id);
 
     int64_t getHits() {
         return hits_;

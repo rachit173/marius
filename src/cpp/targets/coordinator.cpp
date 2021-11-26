@@ -35,13 +35,17 @@ class Coordinator {
     num_workers_(num_workers),
     tag_generator_(num_workers) {
       // setup
+      available_partitions_.resize(num_workers_ + 1);
+      in_process_partitions_.resize(num_workers_, vector<int>(num_partitions_, 0));
+      processed_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
       for (int i = 0; i < num_partitions_; i++) {
-        available_partitions_.push(PartitionMetadata(i, -1, num_partitions_));
+        available_partitions_[num_workers_].push_back(PartitionMetadata(i, -1, num_partitions_));
       }
     }
     void start_working() {
       while (1) {
         std::cout << "Receiving" << std::endl;
+        print_coord_state();
         torch::Tensor tensor = torch::zeros({1});
         std::vector<at::Tensor> tensors({tensor});
         int command = tensors[0].data_ptr<float>()[0];
@@ -58,9 +62,14 @@ class Coordinator {
         if (command == 1) {
           PartitionMetadata part = PartitionRequest(srcRank);
           if (part.idx != -1) sendPartition(part, srcRank);
+          in_process_partitions_[srcRank][part.idx] = 1;
         } else if (command == 2) {
           PartitionMetadata part = receivePartition(srcRank);
-          available_partitions_.push(part);
+          assert(part.src == srcRank);
+          // update co-ordinator view of partitions and interactions
+          available_partitions_[part.src].push_back(part);
+          in_process_partitions_[part.src][part.idx] = 0;
+          sync_interactions(part);
         } else {
           std::cout << "Received an invalid command: " << command << "\n";       
         }
@@ -70,6 +79,21 @@ class Coordinator {
 
     }
   private:
+    void sync_interactions(const PartitionMetadata& part){
+      for(int i = 0; i < num_partitions_; i++){
+        processed_interactions_[part.idx][i] = processed_interactions_[part.idx][i] | part.interactions[i];
+      }
+    }
+
+    void print_coord_state() {
+      for(int i = 0; i <= num_workers_; i++) {
+        SPDLOG_INFO("Partitions with worker {}: ", i);
+        for(int j = 0; j < available_partitions_[i].size(); j++){
+          std::cout << "(" << available_partitions_[i][j].idx << "," << available_partitions_[i][j].src << "), ";
+        }
+        std::cout << std::endl;
+      }
+    }
     // TODO(scaling): Move to PartitionMetadata
     bool sendPartition(PartitionMetadata part, int dstRank) {
       const auto& tensor = part.ConvertToTensor();
@@ -84,13 +108,18 @@ class Coordinator {
       return true;
     }
     PartitionMetadata PartitionRequest(int srcRank) {
-      if (available_partitions_.empty()) {
-        std::cout << "No part available" << std::endl;
-        return PartitionMetadata(-1, -1, num_partitions_);
+      for(int i = num_workers_; i >=0; i--){
+        if(i == srcRank) continue;
+        if(available_partitions_[i].empty()) continue;
+        PartitionMetadata part = available_partitions_[i].back();
+        available_partitions_[i].pop_back();
+        return part;
       }
-      PartitionMetadata part = available_partitions_.front();
-      available_partitions_.pop();
-      return part;
+      // TODO: If nothing was available from other workers' partitions --> Send partition owned by the same worker
+
+      // Not available
+      SPDLOG_INFO("Partitions not available for worker with rank: {}", srcRank);
+      return PartitionMetadata(-1, -1, num_partitions_);
     }
     // TODO(scaling): Move to PartitionMetadata
     PartitionMetadata receivePartition(int srcRank) {
@@ -109,7 +138,9 @@ class Coordinator {
   std::shared_ptr<c10d::ProcessGroupGloo> pg_;
   int num_partitions_;
   int num_workers_;
-  std::queue<PartitionMetadata> available_partitions_;
+  std::vector<vector<PartitionMetadata>> available_partitions_;
+  std::vector<vector<int>> in_process_partitions_;
+  std::vector<vector<int>> processed_interactions_;
   CoordinatorTagGenerator tag_generator_;
 };
 

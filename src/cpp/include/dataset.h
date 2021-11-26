@@ -16,6 +16,7 @@
 #include "datatypes.h"
 #include "logger.h"
 #include "storage.h"
+#include "channel.h"
 
 using std::map;
 using std::vector;
@@ -25,6 +26,7 @@ using std::pair;
 using std::forward_as_tuple;
 using std::unique_ptr;
 using std::queue;
+using std::get;
 /**
  * Represents a training or evaluation set for graph embedding. Iterates over batches and updates model parameters during training.
  */
@@ -43,7 +45,7 @@ class DataSet {
     // batch ordering
     vector<int64_t> edge_bucket_sizes_;                  /**< Total number of edges in each edge bucket */
     vector<Batch *> batches_;                            /**< Ordering of the batch objects that will be processed */
-    queue<Batch *> batches_scaling_;                     /**< Queue of batches ready to process **/
+    Queue<Batch *> *batches_scaling_;                     /**< Queue of batches ready to process **/
     vector<Batch *>::iterator batch_iterator_;           /**< Iterator for batches_ */
     mutex *batch_lock_;                                  /**< Mutex for batches_ and batch_iterator_ */
     mutex *batches_scaling_lock_;                        /**< Mutex for batches_scaling_ queue. */
@@ -307,6 +309,7 @@ class DataSet {
 
     std::atomic<int64_t> batches_processed_;
 };
+
 
 #endif //MARIUS_DATASET_H
 
