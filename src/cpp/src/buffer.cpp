@@ -580,7 +580,11 @@ void PartitionBuffer::evict(Partition *partition) {
 
 void PartitionBuffer::addPartitionForEviction(int partition_id) {
     SPDLOG_INFO("Adding partition {} to eviction queue", partition_id);
-    evict_partitions_->blocking_push(partition_table_[partition_id]);
+    if (partition_table_[partition_id]->present_) {
+        // partition_table_[partition_id]->present_ = false;
+        SPDLOG_INFO("Evict Partitions Queue size: {}", evict_partitions_->size());
+        evict_partitions_->blocking_push(partition_table_[partition_id]);
+    }
     SPDLOG_INFO("Added partition {} to eviction queue", partition_id);
 }
 
