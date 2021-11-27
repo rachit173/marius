@@ -169,7 +169,7 @@ class WorkerNode {
           }
           
           TransferPartitionsFromWorkerNodes(p);
-          ProcessNewPartition();
+          ProcessNewPartition(p);
           size = getSize();
         }
         // Increase the sleep time to reduce lock contention for avail_parts_rw_mutex_
@@ -196,7 +196,6 @@ class WorkerNode {
       for(int i = 0; i < num_partitions_; i++){
         part.interactions[i] = part.interactions[i] | processed_interactions_[part.idx][i];
       }
-
       torch::Tensor tensor = torch::zeros({1}) + 2; // command is 2 for dispatch partition.
       std::vector<at::Tensor> tensors({tensor});
       auto send_work = pg_->send(tensors, coordinator_rank_, tag_generator_.getCoordinatorCommandTag());
@@ -205,11 +204,10 @@ class WorkerNode {
       }
       part.src = rank_;
       SPDLOG_INFO("Dispatching partition {}", part.idx);
-      sendPartition(part, coordinator_rank_);
-      SPDLOG_INFO("Dispatched partition {}", part.idx);
-
       pb_embeds_->addPartitionForEviction(part.idx);
       pb_embeds_state_->addPartitionForEviction(part.idx);
+      sendPartition(part, coordinator_rank_);
+      SPDLOG_INFO("Dispatched partition {}", part.idx);
     }
 
     void TransferPartitionsFromWorkerNodes(PartitionMetadata part) {
@@ -276,29 +274,35 @@ class WorkerNode {
       }
     }
 
-    void ProcessNewPartition() {
-      // Acquire lock on avail parts and add new batches to be processed to the dataset queue
-      std::vector<pair<int, int>> interactions;
-      ReadLock r_lock(avail_parts_rw_mutex_);
-
-
+    void ProcessNewPartition(PartitionMetadata p) {
       // Merge local view of partition with global view fetched from co-ordinator
-      for(auto &pi: avail_parts_) {
-        for(int i = 0; i < num_partitions_; i++){
-          processed_interactions_[pi.idx][i] = pi.interactions[i] | processed_interactions_[pi.idx][i];
-        }
+      for(int i = 0; i < num_partitions_; i++){
+        processed_interactions_[p.idx][i] = p.interactions[i] | processed_interactions_[p.idx][i];
+        trained_interactions_[p.idx][i] = p.interactions[i] | trained_interactions_[p.idx][i];
       }
-
-      for (const auto &pi : avail_parts_) {
+      // Acquire lock on avail parts and add new batches to be processed to the dataset queue.
+      std::vector<pair<int, int>> interactions;
+      {
+        ReadLock r_lock(avail_parts_rw_mutex_);
         for (const auto &pj : avail_parts_) {
-          if (processed_interactions_[pi.idx][pj.idx] == 0) {
-            interactions.push_back({pi.idx, pj.idx});
-            processed_interactions_[pi.idx][pj.idx] = 1;
+          if (pj.idx == p.idx) {
+            if (!processed_interactions_[p.idx][pj.idx]) {
+              processed_interactions_[p.idx][pj.idx] = 1;
+              interactions.push_back({p.idx, pj.idx});
+            }
+          } else {
+            assert(pj.idx != p.idx);
+            if (!processed_interactions_[p.idx][pj.idx]) {
+              interactions.push_back({p.idx, pj.idx});
+              processed_interactions_[p.idx][pj.idx] = 1;
+            }
+            if (!processed_interactions_[pj.idx][p.idx]) {
+              interactions.push_back({pj.idx, p.idx});
+              processed_interactions_[pj.idx][p.idx] = 1;
+            }
           }
         }
       }
-      r_lock.unlock();
-
       if (interactions.size() > 0) { 
         SPDLOG_INFO("Generated {} interactions", interactions.size());
       }
@@ -310,7 +314,6 @@ class WorkerNode {
         SPDLOG_INFO("Pushed ({}, {}) to dataset queue", src, dst);
       }
     }
-
     
     void TransferPartitionsToWorkerNodes() {
       // Receive the request and transfer the partition from the node map
@@ -361,11 +364,11 @@ class WorkerNode {
         {
           // Lock contention possible as acquired every iteration by this function as well as RequestPartitions
           WriteLock w_lock(avail_parts_rw_mutex_);
-          int num_batches_processed = pipeline_->getCompletedBatchesSize();
-          int size = avail_parts_.size();
-          // SPDLOG_INFO("Size of available partitions: {}", size);
+          const int num_batches_processed = pipeline_->getCompletedBatchesSize();
+          const int avail_parts_size = avail_parts_.size();
+          SPDLOG_INFO("Size of available partitions: {}", avail_parts_size);
 
-          if (size == capacity_) {
+          if (avail_parts_size == capacity_) {
             for (int i = 0; i < num_batches_processed; i++) {
               PartitionBatch* batch = (PartitionBatch*)pipeline_->completed_batches_[i];
               int src_idx = batch->src_partition_idx_;
@@ -375,38 +378,36 @@ class WorkerNode {
                 std::cout << "Trained on partition: (" << src_idx << "," << dst_idx << ")" << std::endl;
               }
             }
-          }          
-          int avail_parts_size = avail_parts_.size();          
-
-          std::vector<PartitionMetadata> avail_parts_replacement;
-          for (int i = 0; i < avail_parts_size; i++) {
-            bool done = true;
-            const auto& pi = avail_parts_[i];
-            for (int j = 0; j < avail_parts_size; j++) {
-              const auto& pj = avail_parts_[j];
-              if (!trained_interactions_[pi.idx][pj.idx]) { done = false; break; }
-              if (!trained_interactions_[pj.idx][pi.idx]) { done = false; break; }
+            std::vector<PartitionMetadata> avail_parts_replacement;
+            for (int i = 0; i < avail_parts_size; i++) {
+              bool done = true;
+              const auto& pi = avail_parts_[i];
+              for (int j = 0; j < avail_parts_size; j++) {
+                const auto& pj = avail_parts_[j];
+                if (!trained_interactions_[pi.idx][pj.idx]) { done = false; break; }
+                if (!trained_interactions_[pj.idx][pi.idx]) { done = false; break; }
+              }
+              if (done && partitions_done.empty()) {
+                partitions_done.push_back(pi);
+              } else {
+                avail_parts_replacement.push_back(pi);
+              }
             }
-            if (done && partitions_done.empty() && avail_parts_size == capacity_) {
-              partitions_done.push_back(pi);
-            } else {
-              avail_parts_replacement.push_back(pi);
+            // For debugging
+            if(avail_parts_.size() != avail_parts_replacement.size()){
+              SPDLOG_INFO("Available parts changed...");
+              std::cout << "Old available parts:" << std::endl;
+              for(int i = 0; i < avail_parts_.size(); i++)std::cout << avail_parts_[i].idx << ", ";
+              std::cout << std::endl;
+
+              std::cout << "New available parts:" << std::endl;
+              for (int i = 0; i < avail_parts_replacement.size(); i++)
+                std::cout << avail_parts_replacement[i].idx << ", ";
+              std::cout << std::endl;
             }
+            // Update avail_parts.
+            avail_parts_ = avail_parts_replacement;
           }
-
-          if(avail_parts_.size() != avail_parts_replacement.size()){
-            SPDLOG_INFO("Available parts changed...");
-            std::cout << "Old available parts:" << std::endl;
-            for(int i = 0; i < avail_parts_.size(); i++)std::cout << avail_parts_[i].idx << ", ";
-            std::cout << std::endl;
-
-            std::cout << "New available parts:" << std::endl;
-            for (int i = 0; i < avail_parts_replacement.size(); i++)
-              std::cout << avail_parts_replacement[i].idx << ", ";
-            std::cout << std::endl;
-          }
-          avail_parts_ = avail_parts_replacement;
-          w_lock.unlock();
         }
 
         // TODO: Introduce a queue and put this into separate thread
