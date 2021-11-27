@@ -63,6 +63,7 @@ void LoadEmbeddingsWorker::run() {
 
 
                 if (batch == nullptr) {
+                    SPDLOG_INFO("Got a null batch ptr from GetBatchScaling");
                     break;
                 }
                 SPDLOG_INFO("Got Batch with partitions: ({}, {})", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
@@ -320,7 +321,7 @@ void UpdateEmbeddingsWorker::run() {
                 lock_guard<mutex> guard(((PipelineCPU*)pipeline_)->completed_batches_lock_);
                 ((PipelineCPU*)pipeline_)->completed_batches_.push_back(batch);
             }
-            SPDLOG_TRACE("Completed: {}", batch->batch_id_);
+            SPDLOG_TRACE("Completed: {}, ({}, {})", batch->batch_id_, ((PartitionBatch*)batch)->src_partition_idx_, ((PartitionBatch*)batch)->dst_partition_idx_);
 
             int64_t num_batches_per_log = pipeline_->data_set_->getNumBatches() / marius_options.reporting.logs_per_epoch;
 

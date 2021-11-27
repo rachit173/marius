@@ -45,7 +45,6 @@ class Coordinator {
     void start_working() {
       while (1) {
         std::cout << "Receiving" << std::endl;
-        print_coord_state();
         torch::Tensor tensor = torch::zeros({1});
         std::vector<at::Tensor> tensors({tensor});
         int command = tensors[0].data_ptr<float>()[0];
@@ -58,55 +57,62 @@ class Coordinator {
         }
         // std::cout << "Received " << tensors[0] << " from " << srcRank << std::endl;
         command = tensors[0].data_ptr<float>()[0];
-        std::cout << "Command: " << command << std::endl;
+        std::cout << "Command: " << command << " From: " << srcRank << std::endl;
+
         if (command == 1) {
           PartitionMetadata part = PartitionRequest(srcRank);
-          if (part.idx != -1) sendPartition(part, srcRank);
-          in_process_partitions_[srcRank][part.idx] = 1;
+          sendPartition(part, srcRank);
+          if (part.idx != -1) {
+            in_process_partitions_[srcRank][part.idx] = 1;
+          }
         } else if (command == 2) {
           PartitionMetadata part = receivePartition(srcRank);
           assert(part.src == srcRank);
           // update co-ordinator view of partitions and interactions
           available_partitions_[part.src].push_back(part);
           in_process_partitions_[part.src][part.idx] = 0;
-          sync_interactions(part);
+          syncInteractions(part);
         } else {
           std::cout << "Received an invalid command: " << command << "\n";       
         }
+        printCoordinatorState();
       }
     }
     void stop_working() {
 
     }
   private:
-    void sync_interactions(const PartitionMetadata& part){
+    void syncInteractions(const PartitionMetadata& part){
+      // TODO(rrt): Update the symmetric actions that have happened at that worker as well.
       for(int i = 0; i < num_partitions_; i++){
         processed_interactions_[part.idx][i] = processed_interactions_[part.idx][i] | part.interactions[i];
       }
     }
 
-    void print_coord_state() {
+    void printCoordinatorState() {
+      std::cout << "Available partitions at coordinator - " << std::endl;
       for(int i = 0; i <= num_workers_; i++) {
-        SPDLOG_INFO("Partitions with worker {}: ", i);
+        std::cout << "[ ";
         for(int j = 0; j < available_partitions_[i].size(); j++){
           std::cout << "(" << available_partitions_[i][j].idx << "," << available_partitions_[i][j].src << "), ";
         }
+        std::cout << " ]";
         std::cout << std::endl;
-        std::cout << "Processed Interactions: " << std::endl;
-        for(int i = 0; i < num_partitions_; i++){
-          for(int j = 0; j < num_partitions_; j++){
-            std::cout << processed_interactions_[i][j] << " ";
-          }
-          std::cout << std::endl;
+      }
+      std::cout << "Processed Interactions: " << std::endl;
+      for(int i = 0; i < num_partitions_; i++){
+        for(int j = 0; j < num_partitions_; j++){
+          std::cout << processed_interactions_[i][j] << ", ";
         }
+        std::cout << std::endl;
+      }
 
-        std::cout << "In-process partitions: " << std::endl;
-        for(int i = 0; i < num_workers_; i++){
-          for(int j = 0; j < num_partitions_; j++){
-            std::cout << in_process_partitions_[i][j] << " ";
-          }
-          std::cout << std::endl;
+      std::cout << "In-process partitions: " << std::endl;
+      for(int i = 0; i < num_workers_; i++){
+        for(int j = 0; j < num_partitions_; j++){
+          std::cout << in_process_partitions_[i][j] << ", ";
         }
+        std::cout << std::endl;
       }
     }
     
