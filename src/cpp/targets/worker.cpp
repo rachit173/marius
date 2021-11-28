@@ -238,48 +238,10 @@ class WorkerNode {
         if (send_work) {
           send_work->wait();
         }
-        // Receive metadata
-        auto options = torch::TensorOptions().dtype(torch::kInt64);
-        torch::Tensor node_embed_tensor = torch::zeros({1, 5}, options);
-        std::vector<torch::Tensor> node_embed_tensors({node_embed_tensor});
-        auto recv_work = pg_->recv(node_embed_tensors, part.src, tag_generator_.getTagWhenRequesterDataPath(part.src));
-        if (recv_work) {
-          recv_work->wait();
-        }
-        // Create Partition from metadata received
-        auto partition = Partition::ConvertToPartition(node_embed_tensors[0]);
 
-        // Process: 
-        // 1. Allocate memory for the receiving the incoming partition (posix_memalign)
-        // 2. Receive data into tensor, which points under the hood to the same allocated memory
-        // 3. Write the recvd partition to disk(partition file)
-        
-        // Receive partition data
-        options = torch::TensorOptions().dtype(partition->dtype_);
-        // 1. Allocate memory
-        if(posix_memalign(&(partition->data_ptr_), 4096, partition->partition_size_ * partition->embedding_size_ * partition->dtype_size_)){
-          SPDLOG_ERROR("Error in allocating memory to receive data");
-          exit(1);
-        }
-        torch::Tensor tensor_data_recvd = torch::from_blob(partition->data_ptr_, {partition->partition_size_,partition->embedding_size_},partition->dtype_);              
-        // TODO: [Optimization]: class Single large space, any size of partition can be copied there
-        // then directly use pwrite to copy to correct portion of node embeddings                                                   
-        partition->tensor_ = tensor_data_recvd;
-        
-        // 2. Receive the tensor having data from the worker.
-        std::vector<torch::Tensor> tensors_data_recvd({tensor_data_recvd});
-        auto recv_data_work = pg_->recv(tensors_data_recvd, part.src, tag_generator_.getTagWhenRequesterDataPath(part.src));
-        if (recv_data_work) {
-          recv_data_work->wait();
-        }
-
-        // 3. Write fetched partition to partitioned file.
-        PartitionBuffer *partition_buffer = pb_embeds_;
-        std::vector<Partition *>& partition_table = partition_buffer->getPartitionTable();
-        PartitionedFile *partition_file = partition_buffer->getPartitionedFile();
-        partition_file->writePartition(partition.get());
-
-        //4. TODO: Receive optimizer state partition and write it to its own partitioned file
+        // Receive Partition for node embeddings and optimizer state
+        receivePartitionToBuffer(pb_embeds_, part);
+        receivePartitionToBuffer(pb_embeds_state_, part);
       }
 
       {
@@ -293,6 +255,48 @@ class WorkerNode {
         SPDLOG_INFO("Pushed to avail parts: {}", part.idx);
         avail_parts_.push_back(part);
       }
+    }
+
+    void receivePartitionToBuffer(PartitionBuffer *partition_buffer, PartitionMetadata part) {
+      // Receive metadata
+      auto options = torch::TensorOptions().dtype(torch::kInt64);
+      torch::Tensor node_embed_tensor = torch::zeros({1, 5}, options);
+      std::vector<torch::Tensor> node_embed_tensors({node_embed_tensor});
+      auto recv_work = pg_->recv(node_embed_tensors, part.src, tag_generator_.getTagWhenRequesterDataPath(part.src));
+      if (recv_work) {
+        recv_work->wait();
+      }
+      // Create Partition from metadata received
+      auto partition = Partition::ConvertToPartition(node_embed_tensors[0]);
+
+      // Process: 
+      // 1. Allocate memory for the receiving the incoming partition (posix_memalign)
+      // 2. Receive data into tensor, which points under the hood to the same allocated memory
+      // 3. Write the recvd partition to disk(partition file)
+      
+      // Receive partition data
+      options = torch::TensorOptions().dtype(partition->dtype_);
+      // 1. Allocate memory
+      if(posix_memalign(&(partition->data_ptr_), 4096, partition->partition_size_ * partition->embedding_size_ * partition->dtype_size_)){
+        SPDLOG_ERROR("Error in allocating memory to receive data");
+        exit(1);
+      }
+      torch::Tensor tensor_data_recvd = torch::from_blob(partition->data_ptr_, {partition->partition_size_,partition->embedding_size_},partition->dtype_);              
+      // TODO: [Optimization]: class Single large space, any size of partition can be copied there
+      // then directly use pwrite to copy to correct portion of node embeddings                                                   
+      partition->tensor_ = tensor_data_recvd;
+      
+      // 2. Receive the tensor having data from the worker.
+      std::vector<torch::Tensor> tensors_data_recvd({tensor_data_recvd});
+      auto recv_data_work = pg_->recv(tensors_data_recvd, part.src, tag_generator_.getTagWhenRequesterDataPath(part.src));
+      if (recv_data_work) {
+        recv_data_work->wait();
+      }
+
+      // 3. Write fetched partition to partitioned file.
+      std::vector<Partition *>& partition_table = partition_buffer->getPartitionTable();
+      PartitionedFile *partition_file = partition_buffer->getPartitionedFile();
+      partition_file->writePartition(partition.get());
     }
 
     void forceToBuffer(PartitionBuffer *partition_buffer, int partition_idx){
@@ -349,38 +353,44 @@ class WorkerNode {
         torch::Tensor request = torch::zeros({1});
         std::vector<at::Tensor> tensors({request});
         auto recv_work = pg_->recvAnysource(tensors, tag_generator_.getTagWhenReceiverCommandPath());
-        int srcRank;
+        int src_rank;
         if (recv_work) {
           recv_work->wait();
-          srcRank = recv_work->sourceRank();
+          src_rank = recv_work->sourceRank();
         }
         // send partition metadata
         int part_idx = tensors[0].data_ptr<float>()[0];
-        PartitionBuffer* partition_buffer = pb_embeds_;
-		  	std::vector<Partition*>& partition_table = partition_buffer->getPartitionTable();
+
+        // Send Partition for node embeddings and optimizer state
+        sendPartitionFromBuffer(pb_embeds_, src_rank, part_idx);
+        sendPartitionFromBuffer(pb_embeds_state_, src_rank, part_idx);
+      }
+    }
+
+    void sendPartitionFromBuffer(PartitionBuffer* partition_buffer, int src_rank, int partition_index){
+        std::vector<Partition*>& partition_table = partition_buffer->getPartitionTable();
         PartitionedFile* partition_file = partition_buffer->getPartitionedFile();
-				torch::Tensor partition_metadata = partition_table[part_idx]->ConvertMetaDataToTensor();
+				torch::Tensor partition_metadata = partition_table[partition_index]->ConvertMetaDataToTensor();
 				std::vector<torch::Tensor> tensors_to_send({partition_metadata});
         // send metadata
-        auto send_serialized_partition = pg_->send(tensors_to_send, srcRank, tag_generator_.getTagWhenReceiverDataPath(srcRank));
+        auto send_serialized_partition = pg_->send(tensors_to_send, src_rank, tag_generator_.getTagWhenReceiverDataPath(src_rank));
         if (send_serialized_partition) {
           send_serialized_partition->wait();
         }                
         // send partition data
         // 1. Read partition from disk
         // 2. Convert to tensor and send
-        partition_file->readPartition(send_buffer_, partition_table[part_idx]);
+        partition_file->readPartition(send_buffer_, partition_table[partition_index]);
         // Can be dispatched to co-ordinator but still be present in the buffer till not actually evicted
-        // assert(!partition_table[part_idx]->present_);
+        // assert(!partition_table[partition_index]->present_);
 
-        torch::Tensor tensor_data_to_send = partition_table[part_idx]->ConvertDataToTensor();
+        torch::Tensor tensor_data_to_send = partition_table[partition_index]->ConvertDataToTensor();
         std::vector<torch::Tensor> tensors_data_to_send({tensor_data_to_send});
         // send partition data
-        auto send_part_data = pg_->send(tensors_data_to_send, srcRank, tag_generator_.getTagWhenReceiverDataPath(srcRank));
+        auto send_part_data = pg_->send(tensors_data_to_send, src_rank, tag_generator_.getTagWhenReceiverDataPath(src_rank));
         if (send_part_data) {
           send_part_data->wait();
         }
-      }
     }
     
     void ProcessPartitions() {
