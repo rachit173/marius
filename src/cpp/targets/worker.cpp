@@ -604,7 +604,12 @@ int main(int argc, char* argv[]) {
 -- Signal to the pipeline that epoch is done : variable in pipeline set by worker based on interactions matrix
 -- Clear epoch specific data structures:
   1. processed_interactions_ , 2. trained_interactions_, 3. eviction queues
-3. Optimizer state fetching(to and from)
+-- Blocking pop 
+3. Reduce interactions by a better policy
+  -- coordinator as central unit
 4. Handling symmetric interactions in co-ordinator
-5. Reduce interactions by a better policy
+5. Optimizer state fetching(to and from)
+6. Multi node communication
+7. Run in twitter data to observe bottlenecks
+8. Prefetching fix
 */

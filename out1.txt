@@ -1,0 +1,2 @@
+Normal Execution
+Rank : 1, World size: 3, Prefix: ABC
