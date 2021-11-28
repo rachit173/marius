@@ -459,6 +459,7 @@ PipelineCPU::~PipelineCPU() {
 }
 
 bool Pipeline::isDone() {
+    // return completedScaling;
     return (batches_in_flight_ <= 0) && admitted_batches_ == data_set_->getNumBatches();
 }
 

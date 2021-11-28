@@ -518,6 +518,14 @@ void PartitionBuffer::admitIfNotPresent(int64_t access_id, Partition *partition)
     }
 }
 
+void PartitionBuffer::admitWithLock(Partition* partition){
+    assert(!partition->present_);
+    SPDLOG_TRACE("Admit called for partition {}", partition->partition_id_);
+    admit_lock_.lock();
+    admit(partition);
+    admit_lock_.unlock();
+}
+
 // TODO(scaling): The communication method should have access to the partition_table_
 // to be able update the partition buffer.
 // indices a relative to the global embedding structure
@@ -594,6 +602,7 @@ void PartitionBuffer::admit(Partition *partition) {
     // assumes that the buffer has been locked but not the partition
     int64_t buffer_idx;
     SPDLOG_TRACE("Admitting {}", partition->partition_id_);
+    // TODO: We might evict something which is already present in the buffer. Optimize to avoid that!
     if (free_list_.empty()) {
         // Partition *partition_to_evict = partition_table_[*evict_ids_itr_++];
         SPDLOG_TRACE("Waiting for evict partitions....");

@@ -264,6 +264,12 @@ class PartitionBuffer {
       return embedding_size_;
     }
 
+    bool getLoaded(){
+      return loaded_;
+    }
+
+    void admitWithLock(Partition* partition);
+
     // Get Evictions
     std::vector<Batch *> shuffleBeforeEvictions(std::vector<Batch *> batches);
 

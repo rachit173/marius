@@ -98,6 +98,20 @@ class WorkerNode {
       // 2. Mark partitions when training done and dispatch partition metadata to co-ordinator
       // 3. Transfer partitions to other workers
       // 4. Run actual training
+
+      threads_.emplace_back(std::thread([&](){
+        this->RunTrainer();
+      }));
+
+      // Wait for initializing buffers
+      while(!pb_embeds_->getLoaded()){
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
+      while (!pb_embeds_state_->getLoaded()) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
+
+      // while(!pb_embeds_->getLoaded() && !pb_embeds_state_->getLoaded() ) );
       threads_.emplace_back(std::thread([&](){
         this->RequestPartitions();
       }));
@@ -108,9 +122,7 @@ class WorkerNode {
       threads_.emplace_back(std::thread([&](){
         this->TransferPartitionsToWorkerNodes();
       }));
-      threads_.emplace_back(std::thread([&](){
-        this->RunTrainer();
-      }));
+
       for (auto& t: threads_) {
         t.join();
       }
@@ -174,6 +186,7 @@ class WorkerNode {
         }
         // Increase the sleep time to reduce lock contention for avail_parts_rw_mutex_
         std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time_)); // TODO(rrt): reduce this later;
+        // if complete --> go wait on some trigger
       }
     }
 
@@ -204,8 +217,10 @@ class WorkerNode {
       }
       part.src = rank_;
       SPDLOG_INFO("Dispatching partition {}", part.idx);
-      pb_embeds_->addPartitionForEviction(part.idx);
-      pb_embeds_state_->addPartitionForEviction(part.idx);
+
+        pb_embeds_->addPartitionForEviction(part.idx);
+        pb_embeds_state_->addPartitionForEviction(part.idx);
+      
       sendPartition(part, coordinator_rank_);
       SPDLOG_INFO("Dispatched partition {}", part.idx);
     }
@@ -266,12 +281,24 @@ class WorkerNode {
 
         //4. TODO: Receive optimizer state partition and write it to its own partitioned file
       }
+
+      {
+        forceToBuffer(pb_embeds_, part.idx);
+        forceToBuffer(pb_embeds_state_, part.idx);
+      }
+
       // Add the received partitions to avail_parts_ vector.
       {
         WriteLock w_lock(avail_parts_rw_mutex_);
         SPDLOG_INFO("Pushed to avail parts: {}", part.idx);
         avail_parts_.push_back(part);
       }
+    }
+
+    void forceToBuffer(PartitionBuffer *partition_buffer, int partition_idx){
+      // Admit partition into partition buffer forcefully
+      Partition *partition = partition_buffer->getPartitionTable()[partition_idx];
+      partition_buffer->admitWithLock(partition);
     }
 
     void ProcessNewPartition(PartitionMetadata p) {
@@ -343,7 +370,8 @@ class WorkerNode {
         // 1. Read partition from disk
         // 2. Convert to tensor and send
         partition_file->readPartition(send_buffer_, partition_table[part_idx]);
-        assert(!partition_table[part_idx]->present_);
+        // Can be dispatched to co-ordinator but still be present in the buffer till not actually evicted
+        // assert(!partition_table[part_idx]->present_);
 
         torch::Tensor tensor_data_to_send = partition_table[part_idx]->ConvertDataToTensor();
         std::vector<torch::Tensor> tensors_data_to_send({tensor_data_to_send});
@@ -367,6 +395,7 @@ class WorkerNode {
           const int num_batches_processed = pipeline_->getCompletedBatchesSize();
           const int avail_parts_size = avail_parts_.size();
           SPDLOG_INFO("Size of available partitions: {}", avail_parts_size);
+          // check if completed --> and set pipeline completedScaling to true
 
           if (avail_parts_size == capacity_) {
             for (int i = 0; i < num_batches_processed; i++) {
@@ -568,3 +597,14 @@ int main(int argc, char* argv[]) {
   freeTrainStorage(train_edges, eval_edges, test_edges, embeds, embeds_state, src_rel, src_rel_state, dst_rel, dst_rel_state);
 
 }
+
+/*TODO:
+1. remove sleep --> done
+2. Terminating condition
+-- Signal to the pipeline that epoch is done : variable in pipeline set by worker based on interactions matrix
+-- Clear epoch specific data structures:
+  1. processed_interactions_ , 2. trained_interactions_, 3. eviction queues
+3. Optimizer state fetching(to and from)
+4. Handling symmetric interactions in co-ordinator
+5. Reduce interactions by a better policy
+*/
