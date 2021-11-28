@@ -599,12 +599,12 @@ int main(int argc, char* argv[]) {
 }
 
 /*TODO:
-1. remove sleep --> done
+1. Correctness (accuracy)
 2. Terminating condition
--- Signal to the pipeline that epoch is done : variable in pipeline set by worker based on interactions matrix
--- Clear epoch specific data structures:
-  1. processed_interactions_ , 2. trained_interactions_, 3. eviction queues
--- Blocking pop 
+  -- Signal to the pipeline that epoch is done : variable in pipeline set by worker based on interactions matrix
+  -- Clear epoch specific data structures:
+      1. processed_interactions_ , 2. trained_interactions_, 3. eviction queues
+  -- Blocking pop 
 3. Reduce interactions by a better policy
   -- coordinator as central unit
 4. Handling symmetric interactions in co-ordinator
