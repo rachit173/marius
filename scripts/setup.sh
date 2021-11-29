@@ -49,12 +49,12 @@ cmake -DMARIUS_TORCH_DIR=$BASE_DIR/libtorch -DMARUIS_GLOO_DIR=$BASE_DIR/gloo ..
 make -j5
 
 # build python wrappers
-# python3 -m pip install --upgrade pip
-# python3 -m pip install --upgrade pillow
-# pip3 install torch==1.10.0+cpu torchvision==0.11.1+cpu torchaudio==0.10.0+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html
+python3 -m pip install --upgrade pip
+python3 -m pip install --upgrade pillow
+pip3 install torch==1.10.0+cpu torchvision==0.11.1+cpu torchaudio==0.10.0+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html
 
-# ln -s $BASE_DIR/gloo/gloo/ ~/.local/lib/python3.6/site-packages/torch/include/gloo
+ln -s $BASE_DIR/gloo/gloo/ ~/.local/lib/python3.6/site-packages/torch/include/gloo
 
-# cd $BASE_DIR/marius
-# python3 -m pip install .
+cd $BASE_DIR/marius
+python3 -m pip install .
 
