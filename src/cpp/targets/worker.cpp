@@ -501,12 +501,13 @@ int main(int argc, char* argv[]) {
   int world_size = marius_options.communication.world_size;
   std::string prefix = marius_options.communication.prefix;
   std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
-  auto filestore = c10::make_intrusive<c10d::FileStore>("./rendezvous_checkpoint", 1);
+  string base_dir = "/proj/uwmadison744-f21-PG0/groups/g007";
+  auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
   // auto dev = c10d::GlooDeviceFactory::makeDeviceForInterface("lo");
   std::chrono::milliseconds timeout(10000000);
   auto options = c10d::ProcessGroupGloo::Options::create();
-  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
+  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("eth1"));
   options->timeout = timeout;
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
