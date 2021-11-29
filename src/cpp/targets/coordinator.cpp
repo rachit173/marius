@@ -86,6 +86,7 @@ class Coordinator {
       // TODO(rrt): Update the symmetric actions that have happened at that worker as well.
       for(int i = 0; i < num_partitions_; i++){
         processed_interactions_[part.idx][i] = processed_interactions_[part.idx][i] | part.interactions[i];
+        processed_interactions_[i][part.idx] = processed_interactions_[i][part.idx] | part.interactions[i];
       }
     }
 
