@@ -35,11 +35,11 @@ class Coordinator {
     num_workers_(num_workers),
     tag_generator_(num_workers) {
       // setup
-      available_partitions_.resize(num_workers_ + 1);
+      available_partitions_.clear();
       in_process_partitions_.resize(num_workers_, vector<int>(num_partitions_, 0));
       processed_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
       for (int i = 0; i < num_partitions_; i++) {
-        available_partitions_[num_workers_].push_back(PartitionMetadata(i, -1, num_partitions_));
+        available_partitions_.push_back(PartitionMetadata(i, -1, num_partitions_));
       }
     }
     void start_working() {
@@ -69,7 +69,7 @@ class Coordinator {
           PartitionMetadata part = receivePartition(srcRank);
           assert(part.src == srcRank);
           // update co-ordinator view of partitions and interactions
-          available_partitions_[part.src].push_back(part);
+          available_partitions_.push_back(part);
           in_process_partitions_[part.src][part.idx] = 0;
           syncInteractions(part);
         } else {
@@ -92,13 +92,8 @@ class Coordinator {
 
     void printCoordinatorState() {
       std::cout << "Available partitions at coordinator - " << std::endl;
-      for(int i = 0; i <= num_workers_; i++) {
-        std::cout << "[ ";
-        for(int j = 0; j < available_partitions_[i].size(); j++){
-          std::cout << "(" << available_partitions_[i][j].idx << "," << available_partitions_[i][j].src << "), ";
-        }
-        std::cout << " ]";
-        std::cout << std::endl;
+      for(const auto& itr: available_partitions_){
+        std::cout << "Partition Index: " << itr.idx << " -->  Owner: " << itr.src << std::endl;
       }
       std::cout << "Processed Interactions: " << std::endl;
       for(int i = 0; i < num_partitions_; i++){
@@ -131,13 +126,45 @@ class Coordinator {
     }
     
     PartitionMetadata PartitionRequest(int srcRank) {
-      for(int i = num_workers_; i >=0; i--){
-        if(i == srcRank) continue;
-        if(available_partitions_[i].empty()) continue;
-        PartitionMetadata part = available_partitions_[i].back();
-        available_partitions_[i].pop_back();
-        return part;
+      // Assumes that total # of partitions >=  # of workers * Buffer capacity per worker
+      assert(!available_partitions_.empty());
+
+      // Dispatch partition which can do maximum interactions considering the existing state of worker and already done interactions
+      // and take the maximum
+      vector<int> possible_interactions(num_partitions_, 0);
+      int max_interactions = 0;
+      PartitionMetadata response_partition(-1, -1, num_partitions_);
+      for(const auto& p: available_partitions_){
+        for(int j = 0; j < num_partitions_; j++){
+          if(j == p.idx){
+            possible_interactions[p.idx] += (processed_interactions_[p.idx][j] == 0);
+          } else if(in_process_partitions_[srcRank][j] == 1){
+            // if not processed, add as an interaction. Can add symmetric interaction to double, but no use....
+            possible_interactions[p.idx] += 2 * (processed_interactions_[p.idx][j] == 0);
+          }
+        }
+        if (possible_interactions[p.idx] > max_interactions) {
+          max_interactions = possible_interactions[p.idx];
+          response_partition = p;
+        }
       }
+
+      // Delete if partition present
+      if(response_partition.idx != -1){
+        for(auto itr = available_partitions_.begin(); itr != available_partitions_.end(); itr++){
+          if(itr->idx == response_partition.idx){
+            available_partitions_.erase(itr);
+            break;
+          }
+        }
+      } else {
+        
+        // Just send a "random" partition
+        int idx = rand() % available_partitions_.size();
+        response_partition = available_partitions_[idx];
+        available_partitions_.erase(available_partitions_.begin() + idx);
+      }
+      return response_partition;
       // TODO: If nothing was available from other workers' partitions --> Send partition owned by the same worker
 
       // Not available
@@ -161,7 +188,7 @@ class Coordinator {
   std::shared_ptr<c10d::ProcessGroupGloo> pg_;
   int num_partitions_;
   int num_workers_;
-  std::vector<vector<PartitionMetadata>> available_partitions_;
+  std::vector<PartitionMetadata> available_partitions_;
   std::vector<vector<int>> in_process_partitions_;
   std::vector<vector<int>> processed_interactions_;
   CoordinatorTagGenerator tag_generator_;
