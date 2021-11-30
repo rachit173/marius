@@ -41,6 +41,7 @@ class Coordinator {
       for (int i = 0; i < num_partitions_; i++) {
         available_partitions_.push_back(PartitionMetadata(i, -1, num_partitions_));
       }
+      perf_metrics_label = "[Performance Metrics]";
     }
     void start_working() {
       while (1) {
@@ -192,6 +193,7 @@ class Coordinator {
   std::vector<vector<int>> in_process_partitions_;
   std::vector<vector<int>> processed_interactions_;
   CoordinatorTagGenerator tag_generator_;
+  std::string perf_metrics_label;
 };
 
 
@@ -215,6 +217,10 @@ int main(int argc, char* argv[]) {
     prefixstore, rank, world_size, options);
   int num_partitions = marius_options.storage.num_partitions;
   Coordinator coordinator(pg, num_partitions, world_size-1);
+  std::string log_file = marius_options.general.experiment_name + "_coordinator";
+  MariusLogger marius_logger = MariusLogger(log_file);
+  spdlog::set_default_logger(marius_logger.main_logger_);
+  marius_logger.setConsoleLogLevel(marius_options.reporting.log_level);
   coordinator.start_working();
   coordinator.stop_working();
 }

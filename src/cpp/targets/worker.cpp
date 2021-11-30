@@ -50,13 +50,15 @@ class WorkerNode {
       int rank,
       int capacity,
       int num_partitions,
-      int num_workers
+      int num_workers,
+      bool gpu
     ):
     pg_(pg), 
     rank_(rank),
     capacity_(capacity),
     num_partitions_(num_partitions),
     num_workers_(num_workers),
+    gpu_(gpu),
     tag_generator_(rank, num_workers) {
       coordinator_rank_ = num_workers_; 
       sleep_time_ = 500; // us
@@ -64,6 +66,7 @@ class WorkerNode {
       int embedding_dims_ = 12;
       processed_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
       trained_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
+      perf_metrics_label = "[Performance Metrics]";
     }
     void start_working(DataSet* trainset, DataSet* evalset, 
                         Trainer* trainer, Evaluator* evaluator, 
@@ -464,7 +467,17 @@ class WorkerNode {
     
     void RunTrainer() {
       int num_epochs = 1;
+      
+      Timer training_timer = Timer(gpu_);
+      training_timer.start();
+      SPDLOG_INFO("Start Training");
+      
       trainer_->train(num_epochs);
+
+      training_timer.stop();
+      int64_t training_time = training_timer.getDuration();
+
+      SPDLOG_INFO("Training Complete: {} s", (double) training_time / 1000);
       // TODO(scaling): Add evaluation code.
     }
   private:
@@ -472,6 +485,7 @@ class WorkerNode {
   int rank_;
   int num_partitions_;
   int num_workers_;
+  bool gpu_;
   int capacity_;
   int coordinator_rank_;
   int sleep_time_;
@@ -502,6 +516,7 @@ class WorkerNode {
   PartitionBuffer* pb_embeds_;
   PartitionBuffer* pb_embeds_state_;
   WorkerTagGenerator tag_generator_;
+  std::string perf_metrics_label;
 };
 
 
@@ -524,15 +539,15 @@ int main(int argc, char* argv[]) {
     prefixstore, rank, world_size, options);
   int num_partitions = marius_options.storage.num_partitions;
   int capacity = marius_options.storage.buffer_capacity;
-  WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1);
-  std::string log_file = marius_options.general.experiment_name;
+  bool gpu = marius_options.general.device == torch::kCUDA;
+  WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1, gpu);
+
+  std::string log_file = marius_options.general.experiment_name + "_worker_" + std::to_string(rank);
   MariusLogger marius_logger = MariusLogger(log_file);
   spdlog::set_default_logger(marius_logger.main_logger_);
   marius_logger.setConsoleLogLevel(marius_options.reporting.log_level);
-  bool gpu = false;
-  if (marius_options.general.device == torch::kCUDA) {
-      gpu = true;
-  }
+  
+
   Timer preprocessing_timer = Timer(gpu);
   preprocessing_timer.start();
   SPDLOG_INFO("Start preprocessing");
