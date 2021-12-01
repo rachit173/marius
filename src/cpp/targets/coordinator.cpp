@@ -13,6 +13,7 @@
 #include <memory>
 #include <exception>
 #include <filesystem>
+#include <algorithm>
 
 #include <torch/torch.h>
 #include <c10d/FileStore.hpp>
@@ -40,7 +41,7 @@ class Coordinator {
       in_process_partitions_.resize(num_workers_, vector<int>(num_partitions_, 0));
       processed_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
       for (int i = 0; i < num_partitions_; i++) {
-        available_partitions_.push_back(PartitionMetadata(i, -1, num_partitions_));
+        available_partitions_.push_back(PartitionMetadata(i, -1, timestamp_, num_partitions_));
       }
     }
     void start_working() {
@@ -68,6 +69,9 @@ class Coordinator {
           }
         } else if (command == 2) {
           PartitionMetadata part = receivePartition(srcRank);
+          if (part.timestamp < timestamp_) {
+            part.updateTimestamp(timestamp_);
+          }
           assert(part.src == srcRank);
           // update co-ordinator view of partitions and interactions
           available_partitions_.push_back(part);
@@ -108,7 +112,7 @@ class Coordinator {
     }
     bool signalNextEpoch(int dstRank) {
       auto tensor = torch::zeros({1}) + timestamp_;
-      std::vector<at::Tensor> tensors({tensor});
+      std::vector<torch::Tensor> tensors({tensor});
       auto send_work = pg_->send(tensors, dstRank, tag_generator_.getWorkerSpecificEpochSignalingTag(dstRank));
       if (send_work) {
         send_work->wait();
@@ -131,8 +135,8 @@ class Coordinator {
     void syncInteractions(const PartitionMetadata& part){
       // TODO(rrt): Update the symmetric actions that have happened at that worker as well.
       for(int i = 0; i < num_partitions_; i++){
-        processed_interactions_[part.idx][i] = processed_interactions_[part.idx][i] | part.interactions[i];
-        processed_interactions_[i][part.idx] = processed_interactions_[i][part.idx] | part.interactions[i];
+        processed_interactions_[part.idx][i] = std::max(processed_interactions_[part.idx][i], part.interactions[i]);
+        processed_interactions_[i][part.idx] = std::max(processed_interactions_[i][part.idx], part.interactions[i]);
       }
     }
 
@@ -179,14 +183,14 @@ class Coordinator {
       // and take the maximum
       vector<int> possible_interactions(num_partitions_, 0);
       int max_interactions = 0;
-      PartitionMetadata response_partition(-1, -1, num_partitions_);
+      PartitionMetadata response_partition(-1, -1, timestamp_, num_partitions_);
       for(const auto& p: available_partitions_){
         for(int j = 0; j < num_partitions_; j++){
           if(j == p.idx){
-            possible_interactions[p.idx] += (processed_interactions_[p.idx][j] == 0);
+            possible_interactions[p.idx] += (processed_interactions_[p.idx][j] <= timestamp_);
           } else if(in_process_partitions_[srcRank][j] == 1){
             // if not processed, add as an interaction. Can add symmetric interaction to double, but no use....
-            possible_interactions[p.idx] += 2 * (processed_interactions_[p.idx][j] == 0);
+            possible_interactions[p.idx] += 2 * (processed_interactions_[p.idx][j] <= timestamp_);
           }
         }
         if (possible_interactions[p.idx] > max_interactions) {
@@ -215,12 +219,12 @@ class Coordinator {
 
       // Not available
       SPDLOG_INFO("Partitions not available for worker with rank: {}", srcRank);
-      return PartitionMetadata(-1, -1, num_partitions_);
+      return PartitionMetadata(-1, -1, timestamp_, num_partitions_);
     }
     // TODO(scaling): Move to PartitionMetadata
     PartitionMetadata receivePartition(int srcRank) {
-      torch::Tensor part_tensor = torch::zeros({num_partitions_+3});
-      std::vector<at::Tensor> part_tensor_vec({part_tensor});
+      torch::Tensor part_tensor = torch::zeros({num_partitions_+kPartititionMetadataSerde});
+      std::vector<torch::Tensor> part_tensor_vec({part_tensor});
       auto recv_work = pg_->recv(part_tensor_vec, srcRank, tag_generator_.getWorkerSpecificCommunicationTag(srcRank));
       if (recv_work) {
         recv_work->wait();

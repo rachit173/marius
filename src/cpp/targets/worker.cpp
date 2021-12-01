@@ -17,6 +17,7 @@
 #include <mutex>
 #include <exception>
 #include <filesystem>
+#include <algorithm>
 
 
 #include <torch/torch.h>
@@ -57,7 +58,8 @@ class WorkerNode {
     capacity_(capacity),
     num_partitions_(num_partitions),
     num_workers_(num_workers),
-    tag_generator_(rank, num_workers) {
+    tag_generator_(rank, num_workers),
+    timestamp_(0) {
       coordinator_rank_ = num_workers_; 
       sleep_time_ = 500; // us
       int partition_size_ = 10;
@@ -123,6 +125,10 @@ class WorkerNode {
         this->TransferPartitionsToWorkerNodes();
       }));
 
+      threads_.emplace_back(std::thread([&](){
+        this->PrepareForNextEpoch();
+      }));
+
       for (auto& t: threads_) {
         t.join();
       }
@@ -149,7 +155,7 @@ class WorkerNode {
       }
       std::cout << "Started Receiving" << std::endl;
       // Receive the returned partition
-      torch::Tensor part_tensor = torch::zeros({num_partitions_+3});
+      torch::Tensor part_tensor = torch::zeros({num_partitions_+kPartititionMetadataSerde});
       std::vector<at::Tensor> part_tensor_vec({part_tensor});
       auto recv_work = pg_->recv(part_tensor_vec, srcRank, tag_generator_.getCoordinatorSpecificCommunicationTag());
       if (recv_work) {
@@ -218,13 +224,44 @@ class WorkerNode {
       part.src = rank_;
       SPDLOG_INFO("Dispatching partition {}", part.idx);
 
-        pb_embeds_->addPartitionForEviction(part.idx);
-        pb_embeds_state_->addPartitionForEviction(part.idx);
+      pb_embeds_->addPartitionForEviction(part.idx);
+      pb_embeds_state_->addPartitionForEviction(part.idx);
       
+      // TODO(multi_epoch):
+      /**
+      if (part.T < worker_time_) {
+        part.clear_interactions();
+        part.increment_timestamp();
+      }
+
+
+      */
       sendPartition(part, coordinator_rank_);
       SPDLOG_INFO("Dispatched partition {}", part.idx);
     }
 
+    // TODO(multi_epoch): 
+    void PrepareForNextEpoch() {
+      // // TODO(multi_epoch)
+      // signal trainer->setDone() so that isDoneScaling() true;
+      // Receive signal from coordinator
+      while(1) {
+        int srcRank = 0;
+        torch::Tensor tensor = torch::zeros({1});
+        std::vector<torch::Tensor> signal({tensor});        
+        auto recv_work = pg_->recv(signal, srcRank, tag_generator_.getEpochSignalingTag());
+        if (recv_work) {
+          recv_work->wait();
+          SPDLOG_INFO("Received signal for coordinator for next epoch {}", signal[0].data_ptr<float>()[0]);
+          {
+            std::lock_guard<std::mutex> guard(next_epoch_mutex_);
+            pipeline_->clearCompletedBatches();         
+            timestamp_++;
+          }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time_)); // TODO(rrt): reduce this later;
+      }
+    }
     void TransferPartitionsFromWorkerNodes(PartitionMetadata part) {
       if (part.src == -1) {
         // Already have the partition.
@@ -308,8 +345,8 @@ class WorkerNode {
     void ProcessNewPartition(PartitionMetadata p) {
       // Merge local view of partition with global view fetched from co-ordinator
       for(int i = 0; i < num_partitions_; i++){
-        processed_interactions_[p.idx][i] = p.interactions[i] | processed_interactions_[p.idx][i];
-        trained_interactions_[p.idx][i] = p.interactions[i] | trained_interactions_[p.idx][i];
+        processed_interactions_[p.idx][i] = std::max(p.interactions[i], processed_interactions_[p.idx][i]);
+        trained_interactions_[p.idx][i] = std::max(p.interactions[i] , trained_interactions_[p.idx][i]);
       }
       // Acquire lock on avail parts and add new batches to be processed to the dataset queue.
       std::vector<pair<int, int>> interactions;
@@ -317,19 +354,19 @@ class WorkerNode {
         ReadLock r_lock(avail_parts_rw_mutex_);
         for (const auto &pj : avail_parts_) {
           if (pj.idx == p.idx) {
-            if (!processed_interactions_[p.idx][pj.idx]) {
-              processed_interactions_[p.idx][pj.idx] = 1;
+            if (processed_interactions_[p.idx][pj.idx] <= timestamp_) {
               interactions.push_back({p.idx, pj.idx});
+              processed_interactions_[p.idx][pj.idx] = timestamp_+1;
             }
           } else {
             assert(pj.idx != p.idx);
-            if (!processed_interactions_[p.idx][pj.idx]) {
+            if (processed_interactions_[p.idx][pj.idx] <= timestamp_ && pj.timestamp == timestamp_) {
               interactions.push_back({p.idx, pj.idx});
-              processed_interactions_[p.idx][pj.idx] = 1;
+              processed_interactions_[p.idx][pj.idx] = timestamp_+1;
             }
-            if (!processed_interactions_[pj.idx][p.idx]) {
+            if (processed_interactions_[pj.idx][p.idx] <= timestamp_ && pj.timestamp == timestamp_) {
               interactions.push_back({pj.idx, p.idx});
-              processed_interactions_[pj.idx][p.idx] = 1;
+              processed_interactions_[pj.idx][p.idx] = timestamp_+1;
             }
           }
         }
@@ -402,36 +439,59 @@ class WorkerNode {
         {
           // Lock contention possible as acquired every iteration by this function as well as RequestPartitions
           WriteLock w_lock(avail_parts_rw_mutex_);
-          const int num_batches_processed = pipeline_->getCompletedBatchesSize();
           const int avail_parts_size = avail_parts_.size();
           SPDLOG_INFO("Size of available partitions: {}", avail_parts_size);
           // check if completed --> and set pipeline completedScaling to true
 
+          // Find a suitable candidate for eviction.
           if (avail_parts_size == capacity_) {
-            for (int i = 0; i < num_batches_processed; i++) {
-              PartitionBatch* batch = (PartitionBatch*)pipeline_->completed_batches_[i];
-              int src_idx = batch->src_partition_idx_;
-              int dst_idx = batch->dst_partition_idx_;
-              if (trained_interactions_[src_idx][dst_idx] == 0) {
-                trained_interactions_[src_idx][dst_idx] = 1;
-                std::cout << "Trained on partition: (" << src_idx << "," << dst_idx << ")" << std::endl;
-              }
-            }
-            std::vector<PartitionMetadata> avail_parts_replacement;
+            // TODO(multi_epoch): Find partition with timestamp less than worker_time_
+            int old_partition_index = -1;
             for (int i = 0; i < avail_parts_size; i++) {
-              bool done = true;
-              const auto& pi = avail_parts_[i];
-              for (int j = 0; j < avail_parts_size; j++) {
-                const auto& pj = avail_parts_[j];
-                if (!trained_interactions_[pi.idx][pj.idx]) { done = false; break; }
-                if (!trained_interactions_[pj.idx][pi.idx]) { done = false; break; }
-              }
-              if (done && partitions_done.empty()) {
-                partitions_done.push_back(pi);
-              } else {
-                avail_parts_replacement.push_back(pi);
+              if (avail_parts_[i].timestamp < timestamp_) {
+                old_partition_index = i;
+                break;
               }
             }
+
+            std::vector<PartitionMetadata> avail_parts_replacement;
+            if (old_partition_index != -1) {
+              partitions_done.push_back(avail_parts_[old_partition_index]);
+              avail_parts_replacement = avail_parts_;
+              avail_parts_replacement.erase(avail_parts_replacement.begin()+old_partition_index);  
+            } else {
+              for (const auto& part: avail_parts_) assert(part.timestamp == timestamp_);
+              // Update trained interaction matrix.
+              {
+                std::lock_guard<std::mutex> guard(next_epoch_mutex_);
+                const int num_batches_processed = pipeline_->getCompletedBatchesSize();
+                for (int i = 0; i < num_batches_processed; i++) {
+                  PartitionBatch* batch = (PartitionBatch*)pipeline_->completed_batches_[i]; // 
+                  int src_idx = batch->src_partition_idx_;
+                  int dst_idx = batch->dst_partition_idx_;
+                  if (trained_interactions_[src_idx][dst_idx] <= timestamp_ ) {
+                    trained_interactions_[src_idx][dst_idx] = timestamp_+1;
+                    std::cout << "Trained on partition: (" << src_idx << "," << dst_idx << ")" << std::endl;
+                  }
+                }
+              }
+              // Find partitions with all trained interactions on worker.
+              for (int i = 0; i < avail_parts_size; i++) {
+                bool done = true;
+                const auto& pi = avail_parts_[i];
+                for (int j = 0; j < avail_parts_size; j++) {
+                  const auto& pj = avail_parts_[j];
+                  if (trained_interactions_[pi.idx][pj.idx] <= timestamp_) { done = false; break; }
+                  if (trained_interactions_[pj.idx][pi.idx] <= timestamp_) { done = false; break; }
+                }
+                if (done && partitions_done.empty()) {
+                  partitions_done.push_back(pi);
+                } else {
+                  avail_parts_replacement.push_back(pi);
+                }
+              }
+            }
+
             // For debugging
             if(avail_parts_.size() != avail_parts_replacement.size()){
               SPDLOG_INFO("Available parts changed...");
@@ -465,6 +525,8 @@ class WorkerNode {
     void RunTrainer() {
       int num_epochs = 1;
       trainer_->train(num_epochs);
+      // TODO(multi_epoch)
+      // trainer_->trainScaling()
       // TODO(scaling): Add evaluation code.
     }
   private:
@@ -488,10 +550,12 @@ class WorkerNode {
   std::vector<std::shared_ptr<torch::Tensor>> node_map;
   vector<vector<int>> processed_interactions_;
   vector<vector<int>> trained_interactions_;
+  mutable std::mutex next_epoch_mutex_;
   int partition_size_;
   int dtype_size_;
   int embedding_size_; 
   int embedding_dims_;
+  int timestamp_;
   DataSet* trainset_;
   DataSet* evalset_;
   Trainer* trainer_;
@@ -511,13 +575,13 @@ int main(int argc, char* argv[]) {
   int world_size = marius_options.communication.world_size;
   std::string prefix = marius_options.communication.prefix;
   std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
-  string base_dir = "/proj/uwmadison744-f21-PG0/groups/g007";
+  string base_dir = "/mnt/data/Work/marius";
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
   // auto dev = c10d::GlooDeviceFactory::makeDeviceForInterface("lo");
   std::chrono::milliseconds timeout(10000000);
   auto options = c10d::ProcessGroupGloo::Options::create();
-  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("eth1"));
+  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
   options->timeout = timeout;
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(

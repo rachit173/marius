@@ -105,7 +105,7 @@ class Pipeline {
     virtual void reportThreadStatus() = 0;
 
     virtual size_t getCompletedBatchesSize() = 0;
-    
+    virtual void clearCompletedBatches() = 0;
     void reportMRR();
 };
 
@@ -145,6 +145,11 @@ class PipelineCPU : public Pipeline {
       std::lock_guard<std::mutex> guard(completed_batches_lock_);
       return completed_batches_.size();
     }
+
+    void clearCompletedBatches() override {
+      std::lock_guard<std::mutex> guard(completed_batches_lock_);
+      completed_batches_.clear();
+    }
 };
 
 class PipelineGPU : public Pipeline {
@@ -182,6 +187,11 @@ class PipelineGPU : public Pipeline {
     size_t getCompletedBatchesSize() override {
       std::lock_guard<std::mutex> guard(completed_batches_lock_);
       return completed_batches_.size();
+    }
+    
+    void clearCompletedBatches() override {
+      std::lock_guard<std::mutex> guard(completed_batches_lock_);
+      completed_batches_.clear();
     }
 };
 

@@ -41,7 +41,7 @@ void LoadEmbeddingsWorker::run() {
             *status_ = ThreadStatus::WaitPop;
             std::unique_lock lock(*pipeline_->max_batches_lock_);
             SPDLOG_INFO("In-flight batches: {}, Admitted batches: {}", pipeline_->batches_in_flight_, pipeline_->admitted_batches_);
-            if ((pipeline_->batches_in_flight_ < pipeline_->max_batches_in_flight_) && pipeline_->admitted_batches_ < pipeline_->data_set_->getNumBatches()) {
+            if ((pipeline_->batches_in_flight_ < pipeline_->max_batches_in_flight_) && pipeline_->admitted_batches_ < 1e9) {
                 pipeline_->admitted_batches_++;
                 pipeline_->batches_in_flight_++;
                 lock.unlock();
