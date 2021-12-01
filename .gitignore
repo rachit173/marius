@@ -170,5 +170,5 @@ Thumbs.db
 src/cpp/third_party/libtorch/*
 
 data/*
-output_dir/*
+output_dir*/*
 rendezvous_checkpoint

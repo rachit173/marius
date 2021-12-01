@@ -6,7 +6,8 @@ fi
 
 cd build/ &&  cmake --build . --target worker coordinator -- -j 5 && cd ..
 BASE_DIR="/proj/uwmadison744-f21-PG0/groups/g007"
-rm $BASE_DIR/rendezvous_checkpoint
+rm -f $BASE_DIR/rendezvous_checkpoint
+rm -f rendezvous_checkpoint
 rank=$1
 wsz=$2
 mode=$3

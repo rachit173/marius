@@ -12,13 +12,19 @@ struct Response {
 
 
 struct PartitionMetadata {
-  PartitionMetadata(int idx_, int src_, int num_partitions): idx(idx_), src(src_), interactions(num_partitions, 0) {}
-  void clear_interactions() {
-    for (auto& i : interactions) i = 0;
+  PartitionMetadata(int idx_, int src_, int num_partitions): idx(idx_), src(src_), interactions(num_partitions, 0) {
+    timestamp = 0;
+  }
+  void updateTimestamp(int ts) {
+    timestamp = ts;
+    for (int i = 0; i < interactions.size(); i++) {
+      interactions[i] = ts;
+    }
   }
   int idx;
   int src;
   std::vector<int> interactions;
+  int timestamp;
   /**
    * @brief 
    * The tensor T comprises of the format,

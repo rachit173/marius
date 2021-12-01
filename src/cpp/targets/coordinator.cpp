@@ -33,7 +33,8 @@ class Coordinator {
     pg_(pg), 
     num_partitions_(num_partitions),
     num_workers_(num_workers),
-    tag_generator_(num_workers) {
+    tag_generator_(num_workers),
+    timestamp_(0) {
       // setup
       available_partitions_.clear();
       in_process_partitions_.resize(num_workers_, vector<int>(num_partitions_, 0));
@@ -76,12 +77,57 @@ class Coordinator {
           std::cout << "Received an invalid command: " << command << "\n";       
         }
         printCoordinatorState();
+        CheckForEpochCompletion();
       }
     }
     void stop_working() {
 
     }
   private:
+    double getCompletionRatio(int ts) {
+      double total = num_partitions_ * num_partitions_;
+      double completed = 0; 
+      for (int i = 0; i < num_partitions_; i++) {
+        for (int j = 0; j < num_partitions_; j++) {
+          if (processed_interactions_[i][j] == ts+1) completed+=1;
+        }
+      }
+      return completed / total;
+    }
+    void updateInteractionsTimestamp(int ts) {
+      for (int i = 0; i < num_partitions_; i++) {
+        for (int j = 0; j < num_partitions_; j++) {
+          processed_interactions_[i][j]=ts;
+        }
+      }      
+    }
+    void updateAvailablePartitionsTimestamp(int ts) {
+      for (auto& part: available_partitions_) {
+        part.updateTimestamp(ts);
+      }
+    }
+    bool signalNextEpoch(int dstRank) {
+      auto tensor = torch::zeros({1}) + timestamp_;
+      std::vector<at::Tensor> tensors({tensor});
+      auto send_work = pg_->send(tensors, dstRank, tag_generator_.getWorkerSpecificEpochSignalingTag(dstRank));
+      if (send_work) {
+        send_work->wait();
+      } else {
+        return false;
+      }
+      return true;
+    }
+    void CheckForEpochCompletion() {
+      if (getCompletionRatio(timestamp_) == 1.0) {
+        timestamp_++;
+        updateInteractionsTimestamp(timestamp_);
+        updateAvailablePartitionsTimestamp(timestamp_);
+        // Signal all workers for next epoch
+        for (int rank = 0; rank < num_workers_; rank++) {
+          assert(signalNextEpoch(rank));
+        }
+      }
+    }
     void syncInteractions(const PartitionMetadata& part){
       // TODO(rrt): Update the symmetric actions that have happened at that worker as well.
       for(int i = 0; i < num_partitions_; i++){
@@ -192,6 +238,7 @@ class Coordinator {
   std::vector<vector<int>> in_process_partitions_;
   std::vector<vector<int>> processed_interactions_;
   CoordinatorTagGenerator tag_generator_;
+  int timestamp_;
 };
 
 
@@ -202,13 +249,13 @@ int main(int argc, char* argv[]) {
   std::string prefix = marius_options.communication.prefix;
   std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
 
-  string base_dir = "/proj/uwmadison744-f21-PG0/groups/g007";
+  string base_dir = "/mnt/data/Work/marius";
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
 
   std::chrono::milliseconds timeout(10000000);
   auto options = c10d::ProcessGroupGloo::Options::create();
-  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("eth1"));
+  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
   options->timeout = timeout;
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
