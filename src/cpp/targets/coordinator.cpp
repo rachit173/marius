@@ -128,7 +128,10 @@ class Coordinator {
         updateAvailablePartitionsTimestamp(timestamp_);
         // Signal all workers for next epoch
         for (int rank = 0; rank < num_workers_; rank++) {
-          assert(signalNextEpoch(rank));
+          bool signal_success = signalNextEpoch(rank);
+          if(signal_success){
+            SPDLOG_TRACE("Signalled {}", rank);
+          }
         }
       }
     }
@@ -218,7 +221,7 @@ class Coordinator {
       // TODO: If nothing was available from other workers' partitions --> Send partition owned by the same worker
 
       // Not available
-      SPDLOG_INFO("Partitions not available for worker with rank: {}", srcRank);
+      SPDLOG_TRACE("Partitions not available for worker with rank: {}", srcRank);
       return PartitionMetadata(-1, -1, timestamp_, num_partitions_);
     }
     // TODO(scaling): Move to PartitionMetadata
@@ -257,7 +260,7 @@ int main(int argc, char* argv[]) {
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
 
-  std::chrono::milliseconds timeout(10000000);
+  std::chrono::hours timeout(1);
   auto options = c10d::ProcessGroupGloo::Options::create();
   options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
   options->timeout = timeout;

@@ -86,7 +86,7 @@ class WorkerNode {
         // Allocate memory for send and receive buffers
         // TODO(scaling): Currently it seems a larger partition is being allocation than needed.
         partition_size_ = pb_embeds_->getPartitionSize();
-        std::cout << "Partition size of send buffer : " << partition_size_;
+        SPDLOG_TRACE("Partition size of send buffer : {}", partition_size_);
         dtype_size_ = pb_embeds_->getDtypeSize();
         embedding_size_ = pb_embeds_->getEmbeddingSize();
         if(posix_memalign(&send_buffer_, 4096, partition_size_ * embedding_size_ * dtype_size_)){
@@ -153,7 +153,7 @@ class WorkerNode {
       if (send_work) {
         send_work->wait();
       }
-      std::cout << "Started Receiving" << std::endl;
+      SPDLOG_TRACE("Started Receiving");
       // Receive the returned partition
       torch::Tensor part_tensor = torch::zeros({num_partitions_+kPartititionMetadataSerde});
       std::vector<at::Tensor> part_tensor_vec({part_tensor});
@@ -174,15 +174,15 @@ class WorkerNode {
     void RequestPartitions() {
       while (1) {
         int size = getSize();
-        // SPDLOG_INFO("Number of elements in available partitions: {}", size);
+        SPDLOG_TRACE("Number of elements in available partitions: {}", size);
         while (size < capacity_) {
-          std::cout << size << " " << capacity_ << std::endl;
+          SPDLOG_TRACE("Avail parts --> size: {}, capacity: {}", size, capacity_);
           PartitionMetadata p = receivePartition(coordinator_rank_);
-          SPDLOG_INFO("Received partition metadata from co-ordinator: {} {}", p.idx, p.src);
+          SPDLOG_TRACE("Received partition metadata from co-ordinator: Index: {}, source: {}, timestamp: {}", p.idx, p.src, p.timestamp);
           
           // Partition not available
           if(p.idx == -1 && p.src == -1){
-            SPDLOG_INFO("Partition not available... Sleeping..");
+            SPDLOG_TRACE("Partition not available... Sleeping..");
             break;
           }
           
@@ -213,7 +213,7 @@ class WorkerNode {
       // TODO: Put into eviction queue which belongs to partition buffer
       // TODO: PartitionMetadata -> interactions ==> processed_interactions_row for index part.idx
       for(int i = 0; i < num_partitions_; i++){
-        part.interactions[i] = part.interactions[i] | processed_interactions_[part.idx][i];
+        part.interactions[i] = std::max(part.interactions[i], processed_interactions_[part.idx][i]);
       }
       torch::Tensor tensor = torch::zeros({1}) + 2; // command is 2 for dispatch partition.
       std::vector<at::Tensor> tensors({tensor});
@@ -222,7 +222,7 @@ class WorkerNode {
         send_work->wait();
       }
       part.src = rank_;
-      SPDLOG_INFO("Dispatching partition {}", part.idx);
+      SPDLOG_TRACE("Dispatching partition {}, timestamp: {}. Worker timestamp: {}", part.idx, part.timestamp, timestamp_);
 
       pb_embeds_->addPartitionForEviction(part.idx);
       pb_embeds_state_->addPartitionForEviction(part.idx);
@@ -237,7 +237,7 @@ class WorkerNode {
 
       */
       sendPartition(part, coordinator_rank_);
-      SPDLOG_INFO("Dispatched partition {}", part.idx);
+      SPDLOG_TRACE("Dispatched partition {}", part.idx);
     }
 
     // TODO(multi_epoch): 
@@ -246,10 +246,9 @@ class WorkerNode {
       // signal trainer->setDone() so that isDoneScaling() true;
       // Receive signal from coordinator
       while(1) {
-        int srcRank = 0;
         torch::Tensor tensor = torch::zeros({1});
-        std::vector<torch::Tensor> signal({tensor});        
-        auto recv_work = pg_->recv(signal, srcRank, tag_generator_.getEpochSignalingTag());
+        std::vector<torch::Tensor> signal({tensor});
+        auto recv_work = pg_->recv(signal, coordinator_rank_, tag_generator_.getEpochSignalingTag());
         if (recv_work) {
           recv_work->wait();
           SPDLOG_INFO("Received signal for coordinator for next epoch {}", signal[0].data_ptr<float>()[0]);
@@ -289,7 +288,7 @@ class WorkerNode {
       // Add the received partitions to avail_parts_ vector.
       {
         WriteLock w_lock(avail_parts_rw_mutex_);
-        SPDLOG_INFO("Pushed to avail parts: {}", part.idx);
+        SPDLOG_TRACE("Pushed to avail parts: {}", part.idx);
         avail_parts_.push_back(part);
       }
     }
@@ -343,6 +342,7 @@ class WorkerNode {
     }
 
     void ProcessNewPartition(PartitionMetadata p) {
+      SPDLOG_TRACE("Processing new partition: {}, timestamp: {}", p.idx, p.timestamp);
       // Merge local view of partition with global view fetched from co-ordinator
       for(int i = 0; i < num_partitions_; i++){
         processed_interactions_[p.idx][i] = std::max(p.interactions[i], processed_interactions_[p.idx][i]);
@@ -372,14 +372,14 @@ class WorkerNode {
         }
       }
       if (interactions.size() > 0) { 
-        SPDLOG_INFO("Generated {} interactions", interactions.size());
+        SPDLOG_TRACE("Generated {} interactions", interactions.size());
       }
       for (auto interaction: interactions) {
         int src = interaction.first;
         int dst = interaction.second;
         // Add batch to dataset batches queue. 
         trainset_->addBatchScaling(src, dst);
-        SPDLOG_INFO("Pushed ({}, {}) to dataset queue", src, dst);
+        SPDLOG_TRACE("Pushed ({}, {}) to dataset queue", src, dst);
       }
     }
     
@@ -440,7 +440,7 @@ class WorkerNode {
           // Lock contention possible as acquired every iteration by this function as well as RequestPartitions
           WriteLock w_lock(avail_parts_rw_mutex_);
           const int avail_parts_size = avail_parts_.size();
-          SPDLOG_INFO("Size of available partitions: {}", avail_parts_size);
+          SPDLOG_TRACE("Size of available partitions: {}", avail_parts_size);
           // check if completed --> and set pipeline completedScaling to true
 
           // Find a suitable candidate for eviction.
@@ -471,7 +471,7 @@ class WorkerNode {
                   int dst_idx = batch->dst_partition_idx_;
                   if (trained_interactions_[src_idx][dst_idx] <= timestamp_ ) {
                     trained_interactions_[src_idx][dst_idx] = timestamp_+1;
-                    std::cout << "Trained on partition: (" << src_idx << "," << dst_idx << ")" << std::endl;
+                    SPDLOG_TRACE("Trained on partition: ({}, {})", src_idx, dst_idx);
                   }
                 }
               }
@@ -494,15 +494,12 @@ class WorkerNode {
 
             // For debugging
             if(avail_parts_.size() != avail_parts_replacement.size()){
-              SPDLOG_INFO("Available parts changed...");
-              std::cout << "Old available parts:" << std::endl;
-              for(int i = 0; i < avail_parts_.size(); i++)std::cout << avail_parts_[i].idx << ", ";
-              std::cout << std::endl;
+              SPDLOG_TRACE("Available parts changed...");
+              SPDLOG_TRACE("Old available parts:");
+              for(int i = 0; i < avail_parts_.size(); i++) SPDLOG_TRACE("{}", avail_parts_[i].idx);
 
-              std::cout << "New available parts:" << std::endl;
-              for (int i = 0; i < avail_parts_replacement.size(); i++)
-                std::cout << avail_parts_replacement[i].idx << ", ";
-              std::cout << std::endl;
+              SPDLOG_TRACE("New available parts:");
+              for (int i = 0; i < avail_parts_replacement.size(); i++) SPDLOG_TRACE("{}", avail_parts_replacement[i].idx);
             }
             // Update avail_parts.
             avail_parts_ = avail_parts_replacement;
@@ -512,7 +509,7 @@ class WorkerNode {
         // TODO: Introduce a queue and put this into separate thread
         for (auto p : partitions_done) {
           // queue.push(p)
-          SPDLOG_INFO("Dispatching partition {} to co-ordinator..", p.idx);
+          SPDLOG_TRACE("Dispatching partition {} to co-ordinator..", p.idx);
           DispatchPartitionsToCoordinator(p);
         }
         // sleep
@@ -579,7 +576,7 @@ int main(int argc, char* argv[]) {
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
   // auto dev = c10d::GlooDeviceFactory::makeDeviceForInterface("lo");
-  std::chrono::milliseconds timeout(10000000);
+  std::chrono::hours timeout(1);
   auto options = c10d::ProcessGroupGloo::Options::create();
   options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
   options->timeout = timeout;

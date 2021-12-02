@@ -395,15 +395,15 @@ void DataSet::addBatchScaling(int src, int dst) {
     {
         // std::unique_lock batch_lock(*batches_scaling_lock_);
         batches_scaling_->blocking_push(batch);
-        SPDLOG_INFO("Pushed batch with src {} and dst {} into queue", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
+        SPDLOG_TRACE("Pushed batch with src {} and dst {} into queue", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
     }
 }
 
 // TODO(scaling): use batches_scaling_ queue and batches_scaling_ lock
 Batch *DataSet::nextBatchScaling() {
-    SPDLOG_INFO("Called NextBatchScaling... Waiting for popping element from queue");
+    SPDLOG_TRACE("Called NextBatchScaling... Waiting for popping element from queue");
     Batch *batch = get<1>(batches_scaling_->blocking_pop());
-    SPDLOG_INFO("Got next batch from queue: ({}, {})", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
+    SPDLOG_TRACE("Got next batch from queue: ({}, {})", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
 
     current_edge_ += batch->batch_size_;
     return batch;

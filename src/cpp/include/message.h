@@ -34,8 +34,9 @@ struct PartitionMetadata {
    * The tensor T comprises of the format,
    * T[0] = partition id
    * T[1] = partition containing worker id (-1 for no particular source worker)
-   * T[2] = number of partitions
-   * T[k], k=3..n-1 = boolean indicating interaction (self_id, T[k]) has been performed
+   * T[2] = partition timestamp denoting the epoch
+   * T[3] = number of partitions
+   * T[k], k=4..n-1 = integer indicating timestamp of interaction (self_id, T[k])
    * 
    * @return torch::Tensor 
    */
@@ -47,8 +48,7 @@ struct PartitionMetadata {
     tensor.data_ptr<float>()[2] = timestamp;
     tensor.data_ptr<float>()[3] = n;
     for (int i = 0; i < n; i++) {
-      if (interactions[i]) tensor.data_ptr<float>()[i+kPartititionMetadataSerde] = 1;
-      else tensor.data_ptr<float>()[i+kPartititionMetadataSerde] = 0;
+      tensor.data_ptr<float>()[i+kPartititionMetadataSerde] = interactions[i];
     }
     return tensor;
   }
@@ -65,7 +65,7 @@ struct PartitionMetadata {
     int n = tensor.data_ptr<float>()[3];
     auto p = PartitionMetadata(idx, src, timestamp, n);
     for (int i = 0; i < n; i++) {
-      if (tensor.data_ptr<float>()[i+kPartititionMetadataSerde]==1) p.interactions[i] = 1;
+      p.interactions[i] = tensor.data_ptr<float>()[i + kPartititionMetadataSerde];
     }
     return p; 
   }
