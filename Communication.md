@@ -19,3 +19,6 @@ For running coordinator,
 
 
 If there are n workers, then world size is n+1 and the coordinator rank is set to n.
+
+
+Features:
