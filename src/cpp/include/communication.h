@@ -5,6 +5,8 @@ class CoordinatorTagGenerator {
     offset1_ = num_workers + 1;
     offset2_ = offset1_ + num_workers;
     offset3_ = offset2_ + num_workers * num_workers;
+    offset4_ = offset3_ + num_workers;
+    offset5_ = offset4_ + num_workers; // Unused
   }
   int getCoordinatorCommandTag() {
     return 0;
@@ -15,12 +17,17 @@ class CoordinatorTagGenerator {
   int getWorkerSpecificEpochSignalingTag(int worker_rank) {
     return offset3_ +  worker_rank;
   }
+  int getWorkerSpecificEvaluationTag(int worker_rank) {
+    return offset4_ + worker_rank;
+  }
   private:
   int self_rank_;
   int num_workers_;
   int offset1_;
   int offset2_;
   int offset3_;
+  int offset4_;
+  int offset5_;
 };
 
 
@@ -30,6 +37,8 @@ class WorkerTagGenerator {
     offset1_ = num_workers + 1;
     offset2_ = offset1_ + num_workers;
     offset3_ = offset2_ + num_workers * num_workers;
+    offset4_ = offset3_ + num_workers;
+    offset5_ = offset4_ + num_workers; // Unused
   }
   int getCoordinatorCommandTag() {
     return 0;
@@ -52,10 +61,15 @@ class WorkerTagGenerator {
   int getEpochSignalingTag() {
     return offset3_ +  self_rank_;
   }
+  int getEvaluationTag() {
+    return offset4_ + self_rank_; 
+  }
   private:
   int self_rank_;
   int num_workers_;
   int offset1_;
   int offset2_;
   int offset3_;
+  int offset4_;
+  int offset5_;
 };

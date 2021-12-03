@@ -123,8 +123,52 @@ class Coordinator {
       }
       return true;
     }
+    void Evaluation() {
+      SPDLOG_INFO("Performing evaluation");
+      // 1. Identify the source workers for each node partition `sources`.
+      int sources[num_partitions_];
+      // in_process_partitions_ and avaible_partitions_ 
+      // are mutually exclusive and exhaustive for the node partitions.
+      for (int rank = 0; rank < num_workers_; rank++) {
+        for (int id = 0; id < num_partitions_; id++) {
+          if (in_process_partitions_[rank][id]==1) {
+            sources[id] = rank;
+          }
+        }
+      }
+      for (const auto& part : available_partitions_) {
+        assert(part.idx > 0 && part.idx < num_partitions_);
+        sources[part.idx] = part.src;
+      }
+      // 2. Send the `sources` array to worker 0.
+      auto options = torch::TensorOptions().dtype(torch::kInt32);
+      auto tensor = torch::from_blob(sources, {num_partitions_}, options).clone();
+      std::vector<torch::Tensor> tensors({tensor});
+      int dstRank = 0;
+      auto send_work = pg_->send(tensors, dstRank, tag_generator_.getWorkerSpecificEvaluationTag(dstRank));
+      if (send_work) {
+        send_work->wait();
+      } else {
+        throw std::runtime_error("Evaluation request to worker 0 failed");
+      }
+      // 3. Wait for worker 0 response containing evaluation.
+      torch::Tensor eval_tensor = torch::zeros({1});
+      std::vector<torch::Tensor> eval_tensors({eval_tensor});
+      int srcRank = 0;
+      auto recv_work = pg_->recv(eval_tensors, srcRank, tag_generator_.getWorkerSpecificEvaluationTag(srcRank));
+      if (recv_work) {
+        recv_work->wait();
+      } else {
+        throw std::runtime_error("Evaluation failed, did not receive response from worker 0.");
+      }
+    }
     void CheckForEpochCompletion() {
       if (getCompletionRatio(timestamp_) == 1.0) {
+        // TODO(scaling): Replace 3 by epochs_per_eval.
+        if (timestamp_%3 == 0 || timestamp_+1 == num_epochs_) {
+          // Blocks till worker 0 does not return the evaluation.
+          Evaluation();
+        }
         timestamp_++;
         updateInteractionsTimestamp(timestamp_);
         updateAvailablePartitionsTimestamp(timestamp_);

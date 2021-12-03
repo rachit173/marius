@@ -45,7 +45,10 @@ void PipelineEvaluator::evaluate(bool validation) {
 
     int64_t epoch_time = timer.getDuration();
     SPDLOG_INFO("Evaluation complete: {}ms", epoch_time);
-    data_set_->unloadStorage();
+    // TODO(scaling): Can we integrate this with trainer.
+    if (marius_options.communication.prefix == "") {
+        data_set_->unloadStorage();
+    }
 }
 
 SynchronousEvaluator::SynchronousEvaluator(DataSet *data_set, Model *model) {

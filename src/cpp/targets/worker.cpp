@@ -130,7 +130,13 @@ class WorkerNode {
       threads_.emplace_back(std::thread([&](){
         this->PrepareForNextEpoch();
       }));
-
+      // Evaluator thread is run only for worker
+      // with rank 0.
+      if (rank_ == 0) {
+        threads_.emplace_back(std::thread([&]() {
+          this->ServiceEvaluationRequest();
+        }));
+      }
       for (auto& t: threads_) {
         t.join();
       }
@@ -259,8 +265,44 @@ class WorkerNode {
             pipeline_->clearCompletedBatches();         
             timestamp_++;
           }
+          SPDLOG_INFO("New epoch {} started", timestamp_);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time_)); // TODO(rrt): reduce this later;
+      }
+    }
+    void ServiceEvaluationRequest() {
+      while (timestamp_ < num_epochs_) {
+        auto options = torch::TensorOptions().dtype(torch::kInt32);
+        torch::Tensor source = torch::zeros({num_partitions_}, options);
+        std::vector<torch::Tensor> sources({source});
+        auto recv_work = pg_->recv(sources, coordinator_rank_, tag_generator_.getEvaluationTag());
+        if (recv_work) {
+          recv_work->wait();
+          SPDLOG_INFO("Received sources from coordinator");
+          for (int idx = 0; idx < num_partitions_; idx++) {
+            int src = sources[0].data_ptr<int32_t>()[idx];
+            SPDLOG_INFO("Partition {} is on worker {}.", idx, src);
+            // Receive partition `id` from worker `source`.
+            if (src == -1 || src == rank_) {
+              // No partition transfer required.
+            } else {
+              // Transfer partition from worker `source`.
+              receivePartition(idx, src);
+            }
+          }
+          // Call evaluator.
+          evaluator_->evaluate(true);
+        } else {
+          throw std::runtime_error("ServiceEvaluationRequest failed to receive evaluation request.");
+        }
+        // Send evaluation completion message to coordinator.
+        torch::Tensor eval = torch::zeros({1});
+        std::vector<torch::Tensor> evals({eval});
+        auto send_work = pg_->send(evals, coordinator_rank_, tag_generator_.getEvaluationTag());
+        if (send_work) {
+          send_work->wait();
+        } else {
+          throw std::runtime_error("ServiceEvaluationRequest failed to send completion message to coordinator.");
+        }
       }
     }
     void TransferPartitionsFromWorkerNodes(PartitionMetadata part) {
@@ -269,17 +311,7 @@ class WorkerNode {
       } else if (part.src == rank_) {
         // Already have the partition.
       } else {
-        // ask the other worker for the partition
-        torch::Tensor request = torch::zeros({1}) + part.idx;
-        std::vector<at::Tensor> request_tensors({request});
-        auto send_work = pg_->send(request_tensors, part.src, tag_generator_.getTagWhenRequesterCommandPath(part.src));
-        if (send_work) {
-          send_work->wait();
-        }
-
-        // Receive Partition for node embeddings and optimizer state
-        receivePartitionToBuffer(pb_embeds_, part);
-        receivePartitionToBuffer(pb_embeds_state_, part);
+        receivePartition(part.idx, part.src);
       }
 
       {
@@ -294,13 +326,25 @@ class WorkerNode {
         avail_parts_.push_back(part);
       }
     }
-
-    void receivePartitionToBuffer(PartitionBuffer *partition_buffer, PartitionMetadata part) {
+    void receivePartition(int idx, int src) {
+      // TODO : add lock to this method
+      // Ask the other worker for the partition.
+      torch::Tensor request = torch::zeros({1}) + idx;
+      std::vector<at::Tensor> request_tensors({request});
+      auto send_work = pg_->send(request_tensors, src, tag_generator_.getTagWhenRequesterCommandPath(src));
+      if (send_work) {
+        send_work->wait();
+      }
+      // Receive Partition for node embeddings and optimizer state
+      receivePartitionToBuffer(pb_embeds_, src);
+      receivePartitionToBuffer(pb_embeds_state_, src);
+    }
+    void receivePartitionToBuffer(PartitionBuffer *partition_buffer, int src) {
       // Receive metadata
       auto options = torch::TensorOptions().dtype(torch::kInt64);
       torch::Tensor node_embed_tensor = torch::zeros({1, 5}, options);
       std::vector<torch::Tensor> node_embed_tensors({node_embed_tensor});
-      auto recv_work = pg_->recv(node_embed_tensors, part.src, tag_generator_.getTagWhenRequesterDataPath(part.src));
+      auto recv_work = pg_->recv(node_embed_tensors, src, tag_generator_.getTagWhenRequesterDataPath(src));
       if (recv_work) {
         recv_work->wait();
       }
@@ -326,7 +370,7 @@ class WorkerNode {
       
       // 2. Receive the tensor having data from the worker.
       std::vector<torch::Tensor> tensors_data_recvd({tensor_data_recvd});
-      auto recv_data_work = pg_->recv(tensors_data_recvd, part.src, tag_generator_.getTagWhenRequesterDataPath(part.src));
+      auto recv_data_work = pg_->recv(tensors_data_recvd, src, tag_generator_.getTagWhenRequesterDataPath(src));
       if (recv_data_work) {
         recv_data_work->wait();
       }

@@ -41,7 +41,11 @@ void LoadEmbeddingsWorker::run() {
             *status_ = ThreadStatus::WaitPop;
             std::unique_lock lock(*pipeline_->max_batches_lock_);
             SPDLOG_TRACE("In-flight batches: {}, Admitted batches: {}", pipeline_->batches_in_flight_, pipeline_->admitted_batches_);
-            if ((pipeline_->batches_in_flight_ < pipeline_->max_batches_in_flight_) && pipeline_->admitted_batches_ < 1e9) {
+            int64_t max_batches = pipeline_->data_set_->getNumBatches();
+            if (marius_options.communication.prefix != "" && pipeline_->train_ == true) {
+                max_batches = 1e12;
+            }
+            if ((pipeline_->batches_in_flight_ < pipeline_->max_batches_in_flight_) && pipeline_->admitted_batches_ < max_batches) {
                 pipeline_->admitted_batches_++;
                 pipeline_->batches_in_flight_++;
                 lock.unlock();
@@ -55,7 +59,8 @@ void LoadEmbeddingsWorker::run() {
                 // the call getBatch().
                 SPDLOG_TRACE("Getting Batch....");
                 Batch* batch;
-                if (marius_options.communication.prefix == "") {
+                SPDLOG_INFO("Pipeline train is {}", pipeline_->train_);
+                if (marius_options.communication.prefix == "" || pipeline_->train_ == false) {
                     batch = pipeline_->data_set_->getBatch();
                 } else {
                     batch = pipeline_->data_set_->getBatchScaling();
@@ -63,7 +68,7 @@ void LoadEmbeddingsWorker::run() {
 
 
                 if (batch == nullptr) {
-                    SPDLOG_ERROR("Got a null batch ptr from GetBatchScaling");
+                    SPDLOG_ERROR("Got a null batch ptr.");
                     break;
                 }
                 SPDLOG_TRACE("Got Batch with partitions: ({}, {})", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
