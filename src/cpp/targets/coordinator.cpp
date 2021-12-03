@@ -29,12 +29,14 @@ class Coordinator {
     explicit Coordinator(
       std::shared_ptr<c10d::ProcessGroupGloo> pg,
       int num_partitions,
-      int num_workers
+      int num_workers,
+      int num_epochs
     ):
     pg_(pg), 
     num_partitions_(num_partitions),
     num_workers_(num_workers),
     tag_generator_(num_workers),
+    num_epochs_(num_epochs),
     timestamp_(0) {
       // setup
       available_partitions_.clear();
@@ -45,8 +47,8 @@ class Coordinator {
       }
     }
     void start_working() {
-      while (1) {
-        std::cout << "Receiving" << std::endl;
+      while (timestamp_ < num_epochs_) {
+        std::cout << "Timestamp: " << timestamp_ << ", Total epochs: " << num_epochs_ << std::endl;
         torch::Tensor tensor = torch::zeros({1});
         std::vector<at::Tensor> tensors({tensor});
         int command = tensors[0].data_ptr<float>()[0];
@@ -241,6 +243,7 @@ class Coordinator {
   std::shared_ptr<c10d::ProcessGroupGloo> pg_;
   int num_partitions_;
   int num_workers_;
+  int num_epochs_;
   std::vector<PartitionMetadata> available_partitions_;
   std::vector<vector<int>> in_process_partitions_;
   std::vector<vector<int>> processed_interactions_;
@@ -255,6 +258,7 @@ int main(int argc, char* argv[]) {
   int world_size = marius_options.communication.world_size;
   std::string prefix = marius_options.communication.prefix;
   std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
+  std::cout << "Total epochs: " << marius_options.training.num_epochs << std::endl;
 
   string base_dir = "/mnt/data/Work/marius";
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
@@ -268,7 +272,7 @@ int main(int argc, char* argv[]) {
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
     prefixstore, rank, world_size, options);
   int num_partitions = marius_options.storage.num_partitions;
-  Coordinator coordinator(pg, num_partitions, world_size-1);
+  Coordinator coordinator(pg, num_partitions, world_size-1, marius_options.training.num_epochs);
   coordinator.start_working();
   coordinator.stop_working();
 }

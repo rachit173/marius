@@ -51,7 +51,8 @@ class WorkerNode {
       int rank,
       int capacity,
       int num_partitions,
-      int num_workers
+      int num_workers,
+      int num_epochs
     ):
     pg_(pg), 
     rank_(rank),
@@ -59,6 +60,7 @@ class WorkerNode {
     num_partitions_(num_partitions),
     num_workers_(num_workers),
     tag_generator_(rank, num_workers),
+    num_epochs_(num_epochs),
     timestamp_(0) {
       coordinator_rank_ = num_workers_; 
       sleep_time_ = 500; // us
@@ -172,7 +174,7 @@ class WorkerNode {
     }
 
     void RequestPartitions() {
-      while (1) {
+      while (timestamp_ < num_epochs_) {
         int size = getSize();
         SPDLOG_TRACE("Number of elements in available partitions: {}", size);
         while (size < capacity_) {
@@ -245,7 +247,7 @@ class WorkerNode {
       // // TODO(multi_epoch)
       // signal trainer->setDone() so that isDoneScaling() true;
       // Receive signal from coordinator
-      while(1) {
+      while(timestamp_ < num_epochs_) {
         torch::Tensor tensor = torch::zeros({1});
         std::vector<torch::Tensor> signal({tensor});
         auto recv_work = pg_->recv(signal, coordinator_rank_, tag_generator_.getEpochSignalingTag());
@@ -385,7 +387,7 @@ class WorkerNode {
     
     void TransferPartitionsToWorkerNodes() {
       // Receive the request and transfer the partition from the node map
-      while (1) {
+      while (timestamp_ < num_epochs_) {
         // Receive request for transfer
         torch::Tensor request = torch::zeros({1});
         std::vector<at::Tensor> tensors({request});
@@ -434,7 +436,7 @@ class WorkerNode {
       // Generate interactions to be processed.
       // @TODO(scaling): Implement optimal strategies.
       // The strategy computation is expected to be fast and thus we can hold locks
-      while (1) {
+      while (timestamp_ < num_epochs_) {
         std::vector<PartitionMetadata> partitions_done;
         {
           // Lock contention possible as acquired every iteration by this function as well as RequestPartitions
@@ -520,8 +522,7 @@ class WorkerNode {
     }
     
     void RunTrainer() {
-      int num_epochs = 1;
-      trainer_->train(num_epochs);
+      trainer_->train(num_epochs_);
       // TODO(multi_epoch)
       // trainer_->trainScaling()
       // TODO(scaling): Add evaluation code.
@@ -553,6 +554,7 @@ class WorkerNode {
   int embedding_size_; 
   int embedding_dims_;
   int timestamp_;
+  int num_epochs_;
   DataSet* trainset_;
   DataSet* evalset_;
   Trainer* trainer_;
@@ -585,7 +587,7 @@ int main(int argc, char* argv[]) {
     prefixstore, rank, world_size, options);
   int num_partitions = marius_options.storage.num_partitions;
   int capacity = marius_options.storage.buffer_capacity;
-  WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1);
+  WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1, marius_options.training.num_epochs);
   std::string log_file = marius_options.general.experiment_name;
   MariusLogger marius_logger = MariusLogger(log_file);
   spdlog::set_default_logger(marius_logger.main_logger_);
