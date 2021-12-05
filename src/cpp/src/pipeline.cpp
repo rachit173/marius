@@ -59,7 +59,7 @@ void LoadEmbeddingsWorker::run() {
                 // the call getBatch().
                 SPDLOG_TRACE("Getting Batch....");
                 Batch* batch;
-                SPDLOG_INFO("Pipeline train is {}", pipeline_->train_);
+                SPDLOG_TRACE("Pipeline train is {}", pipeline_->train_);
                 if (marius_options.communication.prefix == "" || pipeline_->train_ == false) {
                     batch = pipeline_->data_set_->getBatch();
                 } else {

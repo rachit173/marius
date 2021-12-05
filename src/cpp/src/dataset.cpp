@@ -19,7 +19,7 @@ DataSet::DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storag
     current_negative_id_ = 0;
     epochs_processed_ = 0;
     batches_processed_ = 0;
-    batches_scaling_ = new Queue<Batch *>(10);
+    batches_scaling_ = new Queue<Batch *>(marius_options.storage.buffer_capacity*10);
     batch_lock_ = new std::mutex();
     batches_scaling_lock_ = new std::mutex();
     negative_lock_ = new std::mutex();
