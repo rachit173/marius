@@ -624,7 +624,7 @@ int main(int argc, char* argv[]) {
   // auto dev = c10d::GlooDeviceFactory::makeDeviceForInterface("lo");
   std::chrono::hours timeout(1);
   auto options = c10d::ProcessGroupGloo::Options::create();
-  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("enp6s0f0"));
+  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("enp1s0f0"));
   options->timeout = timeout;
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
