@@ -28,12 +28,14 @@ class Coordinator {
     explicit Coordinator(
       std::shared_ptr<c10d::ProcessGroupGloo> pg,
       int num_partitions,
-      int num_workers
+      int num_workers,
+      std::string perf_metrics_label
     ):
     pg_(pg), 
     num_partitions_(num_partitions),
     num_workers_(num_workers),
-    tag_generator_(num_workers) {
+    tag_generator_(num_workers),
+    perf_metrics_label_(perf_metrics_label) {
       // setup
       available_partitions_.clear();
       in_process_partitions_.resize(num_workers_, vector<int>(num_partitions_, 0));
@@ -41,11 +43,10 @@ class Coordinator {
       for (int i = 0; i < num_partitions_; i++) {
         available_partitions_.push_back(PartitionMetadata(i, -1, num_partitions_));
       }
-      perf_metrics_label = "[Performance Metrics]";
     }
     void start_working() {
       while (1) {
-        std::cout << "Receiving" << std::endl;
+        SPDLOG_INFO("{} Receiving", perf_metrics_label_);
         torch::Tensor tensor = torch::zeros({1});
         std::vector<at::Tensor> tensors({tensor});
         int command = tensors[0].data_ptr<float>()[0];
@@ -58,7 +59,7 @@ class Coordinator {
         }
         // std::cout << "Received " << tensors[0] << " from " << srcRank << std::endl;
         command = tensors[0].data_ptr<float>()[0];
-        std::cout << "Command: " << command << " From: " << srcRank << std::endl;
+        SPDLOG_INFO("{} Command: {}, From: {}", perf_metrics_label_, command, srcRank);
 
         if (command == 1) {
           PartitionMetadata part = PartitionRequest(srcRank);
@@ -74,7 +75,7 @@ class Coordinator {
           in_process_partitions_[part.src][part.idx] = 0;
           syncInteractions(part);
         } else {
-          std::cout << "Received an invalid command: " << command << "\n";       
+          SPDLOG_ERROR("Received an invalid command: {}", command);
         }
         printCoordinatorState();
       }
@@ -180,7 +181,7 @@ class Coordinator {
       if (recv_work) {
         recv_work->wait();
       }
-      std::cout << "tensor received " << part_tensor_vec[0] << std::endl;
+      std::cout << "Tensor received " << part_tensor_vec[0] << std::endl;
       return PartitionMetadata::ConvertToPartition(part_tensor_vec[0]);
     }
 
@@ -193,7 +194,7 @@ class Coordinator {
   std::vector<vector<int>> in_process_partitions_;
   std::vector<vector<int>> processed_interactions_;
   CoordinatorTagGenerator tag_generator_;
-  std::string perf_metrics_label;
+  std::string perf_metrics_label_;
 };
 
 
@@ -208,15 +209,17 @@ int main(int argc, char* argv[]) {
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
 
+  std::string perf_metrics_label = "[Performance Metrics]";
+
   std::chrono::milliseconds timeout(10000000);
   auto options = c10d::ProcessGroupGloo::Options::create();
-  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("eth1"));
+  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("enp1s0f0"));
   options->timeout = timeout;
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
     prefixstore, rank, world_size, options);
   int num_partitions = marius_options.storage.num_partitions;
-  Coordinator coordinator(pg, num_partitions, world_size-1);
+  Coordinator coordinator(pg, num_partitions, world_size-1, perf_metrics_label);
   std::string log_file = marius_options.general.experiment_name + "_coordinator";
   MariusLogger marius_logger = MariusLogger(log_file);
   spdlog::set_default_logger(marius_logger.main_logger_);

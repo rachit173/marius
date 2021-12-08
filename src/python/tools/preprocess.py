@@ -50,8 +50,8 @@ def fb15k(output_dir, num_partitions=1):
 
 def twitter(output_dir, num_partitions=1, split=(.05, .05)):
     TWITTER_URL = "https://snap.stanford.edu/data/twitter-2010.txt.gz"
-    download_path = download_file(TWITTER_URL, output_dir)
-    extract_file(download_path)
+    # download_path = download_file(TWITTER_URL, output_dir)
+    # extract_file(download_path)
 
     return general_parser([str(Path(output_dir) / Path("twitter-2010.txt"))],
                           ["sd"],

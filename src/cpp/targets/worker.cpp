@@ -51,7 +51,8 @@ class WorkerNode {
       int capacity,
       int num_partitions,
       int num_workers,
-      bool gpu
+      bool gpu,
+      std::string perf_metrics_label
     ):
     pg_(pg), 
     rank_(rank),
@@ -59,14 +60,14 @@ class WorkerNode {
     num_partitions_(num_partitions),
     num_workers_(num_workers),
     gpu_(gpu),
-    tag_generator_(rank, num_workers) {
+    tag_generator_(rank, num_workers),
+    perf_metrics_label_(perf_metrics_label) {
       coordinator_rank_ = num_workers_; 
       sleep_time_ = 500; // us
       int partition_size_ = 10;
       int embedding_dims_ = 12;
       processed_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
       trained_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
-      perf_metrics_label = "[Performance Metrics]";
     }
     void start_working(DataSet* trainset, DataSet* evalset, 
                         Trainer* trainer, Evaluator* evaluator, 
@@ -87,7 +88,7 @@ class WorkerNode {
         // Allocate memory for send and receive buffers
         // TODO(scaling): Currently it seems a larger partition is being allocation than needed.
         partition_size_ = pb_embeds_->getPartitionSize();
-        std::cout << "Partition size of send buffer : " << partition_size_;
+        SPDLOG_TRACE("Partition size of send buffer : {}", partition_size_);
         dtype_size_ = pb_embeds_->getDtypeSize();
         embedding_size_ = pb_embeds_->getEmbeddingSize();
         if(posix_memalign(&send_buffer_, 4096, partition_size_ * embedding_size_ * dtype_size_)){
@@ -150,7 +151,7 @@ class WorkerNode {
       if (send_work) {
         send_work->wait();
       }
-      std::cout << "Started Receiving" << std::endl;
+      SPDLOG_INFO("{} Started Receiving from {}", perf_metrics_label_, srcRank);
       // Receive the returned partition
       torch::Tensor part_tensor = torch::zeros({num_partitions_+3});
       std::vector<at::Tensor> part_tensor_vec({part_tensor});
@@ -173,13 +174,13 @@ class WorkerNode {
         int size = getSize();
         // SPDLOG_INFO("Number of elements in available partitions: {}", size);
         while (size < capacity_) {
-          std::cout << size << " " << capacity_ << std::endl;
+          SPDLOG_INFO("{} size: {}, capacity: {}", perf_metrics_label_, size ,capacity_);
           PartitionMetadata p = receivePartition(coordinator_rank_);
-          SPDLOG_INFO("Received partition metadata from co-ordinator: {} {}", p.idx, p.src);
+          SPDLOG_INFO("{} Received partition metadata from co-ordinator: {} {}", perf_metrics_label_, p.idx, p.src);
           
           // Partition not available
           if(p.idx == -1 && p.src == -1){
-            SPDLOG_INFO("Partition not available... Sleeping..");
+            SPDLOG_INFO("{} Partition not available... Sleeping..", perf_metrics_label_);
             break;
           }
           
@@ -219,13 +220,13 @@ class WorkerNode {
         send_work->wait();
       }
       part.src = rank_;
-      SPDLOG_INFO("Dispatching partition {}", part.idx);
+      SPDLOG_INFO("{} Dispatching partition {}", perf_metrics_label_, part.idx);
 
         pb_embeds_->addPartitionForEviction(part.idx);
         pb_embeds_state_->addPartitionForEviction(part.idx);
       
       sendPartition(part, coordinator_rank_);
-      SPDLOG_INFO("Dispatched partition {}", part.idx);
+      SPDLOG_INFO("{} Dispatched partition {}", perf_metrics_label_, part.idx);
     }
 
     void TransferPartitionsFromWorkerNodes(PartitionMetadata part) {
@@ -255,7 +256,7 @@ class WorkerNode {
       // Add the received partitions to avail_parts_ vector.
       {
         WriteLock w_lock(avail_parts_rw_mutex_);
-        SPDLOG_INFO("Pushed to avail parts: {}", part.idx);
+        SPDLOG_INFO("{} Pushed to avail parts: {}", perf_metrics_label_, part.idx);
         avail_parts_.push_back(part);
       }
     }
@@ -338,14 +339,14 @@ class WorkerNode {
         }
       }
       if (interactions.size() > 0) { 
-        SPDLOG_INFO("Generated {} interactions", interactions.size());
+        SPDLOG_INFO("{} Generated {} interactions", perf_metrics_label_, interactions.size());
       }
       for (auto interaction: interactions) {
         int src = interaction.first;
         int dst = interaction.second;
         // Add batch to dataset batches queue. 
         trainset_->addBatchScaling(src, dst);
-        SPDLOG_INFO("Pushed ({}, {}) to dataset queue", src, dst);
+        SPDLOG_INFO("{} Pushed ({}, {}) to dataset queue", perf_metrics_label_, src, dst);
       }
     }
     
@@ -407,7 +408,7 @@ class WorkerNode {
           WriteLock w_lock(avail_parts_rw_mutex_);
           const int num_batches_processed = pipeline_->getCompletedBatchesSize();
           const int avail_parts_size = avail_parts_.size();
-          SPDLOG_INFO("Size of available partitions: {}", avail_parts_size);
+          SPDLOG_INFO("{} Size of available partitions: {}", perf_metrics_label_, avail_parts_size);
           // check if completed --> and set pipeline completedScaling to true
 
           if (avail_parts_size == capacity_) {
@@ -417,7 +418,7 @@ class WorkerNode {
               int dst_idx = batch->dst_partition_idx_;
               if (trained_interactions_[src_idx][dst_idx] == 0) {
                 trained_interactions_[src_idx][dst_idx] = 1;
-                std::cout << "Trained on partition: (" << src_idx << "," << dst_idx << ")" << std::endl;
+                SPDLOG_INFO("{} Trained on partition: ({}, {})", perf_metrics_label_, src_idx, dst_idx);
               }
             }
             std::vector<PartitionMetadata> avail_parts_replacement;
@@ -437,7 +438,6 @@ class WorkerNode {
             }
             // For debugging
             if(avail_parts_.size() != avail_parts_replacement.size()){
-              SPDLOG_INFO("Available parts changed...");
               std::cout << "Old available parts:" << std::endl;
               for(int i = 0; i < avail_parts_.size(); i++)std::cout << avail_parts_[i].idx << ", ";
               std::cout << std::endl;
@@ -448,6 +448,8 @@ class WorkerNode {
               std::cout << std::endl;
             }
             // Update avail_parts.
+            std::string avail_parts_changed = (avail_parts_.size() != avail_parts_replacement.size()) ? "true":"false";
+            SPDLOG_INFO("{} Available parts changed: {}", perf_metrics_label_, avail_parts_changed);
             avail_parts_ = avail_parts_replacement;
           }
         }
@@ -455,7 +457,7 @@ class WorkerNode {
         // TODO: Introduce a queue and put this into separate thread
         for (auto p : partitions_done) {
           // queue.push(p)
-          SPDLOG_INFO("Dispatching partition {} to co-ordinator..", p.idx);
+          SPDLOG_INFO("{} Dispatching partition {} to co-ordinator", perf_metrics_label_, p.idx);
           DispatchPartitionsToCoordinator(p);
         }
         // sleep
@@ -470,14 +472,14 @@ class WorkerNode {
       
       Timer training_timer = Timer(gpu_);
       training_timer.start();
-      SPDLOG_INFO("Start Training");
+      SPDLOG_INFO("{} Start Training", perf_metrics_label_);
       
       trainer_->train(num_epochs);
 
       training_timer.stop();
       int64_t training_time = training_timer.getDuration();
 
-      SPDLOG_INFO("Training Complete: {} s", (double) training_time / 1000);
+      SPDLOG_INFO("{} Training Complete: {} s", perf_metrics_label_, (double) training_time / 1000);
       // TODO(scaling): Add evaluation code.
     }
   private:
@@ -516,7 +518,7 @@ class WorkerNode {
   PartitionBuffer* pb_embeds_;
   PartitionBuffer* pb_embeds_state_;
   WorkerTagGenerator tag_generator_;
-  std::string perf_metrics_label;
+  std::string perf_metrics_label_;
 };
 
 
@@ -530,9 +532,12 @@ int main(int argc, char* argv[]) {
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
   // auto dev = c10d::GlooDeviceFactory::makeDeviceForInterface("lo");
+
+  std::string perf_metrics_label = "[Performance Metrics]";
+
   std::chrono::milliseconds timeout(10000000);
   auto options = c10d::ProcessGroupGloo::Options::create();
-  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("eth1"));
+  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("enp1s0f0"));
   options->timeout = timeout;
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
@@ -540,7 +545,7 @@ int main(int argc, char* argv[]) {
   int num_partitions = marius_options.storage.num_partitions;
   int capacity = marius_options.storage.buffer_capacity;
   bool gpu = marius_options.general.device == torch::kCUDA;
-  WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1, gpu);
+  WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1, gpu, perf_metrics_label);
 
   std::string log_file = marius_options.general.experiment_name + "_worker_" + std::to_string(rank);
   MariusLogger marius_logger = MariusLogger(log_file);
@@ -550,7 +555,7 @@ int main(int argc, char* argv[]) {
 
   Timer preprocessing_timer = Timer(gpu);
   preprocessing_timer.start();
-  SPDLOG_INFO("Start preprocessing");
+  SPDLOG_INFO("{} Start preprocessing", perf_metrics_label);
 
   DataSet *train_set;
   DataSet *eval_set;
@@ -573,16 +578,16 @@ int main(int argc, char* argv[]) {
   bool will_evaluate = !(marius_options.path.validation_edges.empty() && marius_options.path.test_edges.empty());
 
   train_set = new DataSet(train_edges, embeds, embeds_state, src_rel, src_rel_state, dst_rel, dst_rel_state);
-  SPDLOG_INFO("Training set initialized");
+  SPDLOG_INFO("{} Training set initialized", perf_metrics_label);
   if (will_evaluate) {
       eval_set = new DataSet(train_edges, eval_edges, test_edges, embeds, src_rel, dst_rel);
-      SPDLOG_INFO("Evaluation set initialized");
+      SPDLOG_INFO("{} Evaluation set initialized", perf_metrics_label);
   }
 
   preprocessing_timer.stop();
   int64_t preprocessing_time = preprocessing_timer.getDuration();
 
-  SPDLOG_INFO("Preprocessing Complete: {}s", (double) preprocessing_time / 1000);
+  SPDLOG_INFO("{} Preprocessing Complete: {}s", perf_metrics_label, (double) preprocessing_time / 1000);
 
   Trainer *trainer;
   Evaluator *evaluator;

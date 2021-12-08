@@ -206,29 +206,40 @@ def general_parser(files, format, output_dir, delim="", num_partitions=1,
     num_edges_f = []
     num_file_read = 0
 
-    if (len(files) > 3):
-        print("Merging data")
-        files, num_line_skip, data_cols = join_files(
-                                            files, regex, num_line_skip,
-                                            data_cols, delim)
+    # if (len(files) > 3):
+    #     print("Merging data")
+    #     files, num_line_skip, data_cols = join_files(
+    #                                         files, regex, num_line_skip,
+    #                                         data_cols, delim)
 
-    if (len(files) == 1 and dataset_split != (0, 0) and dataset_split != (-1, -1)):
-        print("Splitting data")
-        files, num_line_skip, data_cols = split_dataset(
-                                            files[0], dataset_split[0],
-                                            dataset_split[1], regex,
-                                            num_line_skip, data_cols, delim)
+    # if (len(files) == 1 and dataset_split != (0, 0) and dataset_split != (-1, -1)):
+    #     print("Splitting data")
+    #     files, num_line_skip, data_cols = split_dataset(
+    #                                         files[0], dataset_split[0],
+    #                                         dataset_split[1], regex,
+    #                                         num_line_skip, data_cols, delim)
 
-    if (len(files) > 1 and dataset_split != (-1, -1)):
-        print("Merging data")
-        files, num_line_skip, data_cols = join_files(
-                                            files, regex, num_line_skip,
-                                            data_cols, delim)
-        print("Splitting data")
-        files, num_line_skip, data_cols = split_dataset(
-                                            files[0], dataset_split[0],
-                                            dataset_split[1], regex,
-                                            num_line_skip, data_cols, delim)
+    # if (len(files) > 1 and dataset_split != (-1, -1)):
+    #     print("Merging data")
+    #     files, num_line_skip, data_cols = join_files(
+    #                                         files, regex, num_line_skip,
+    #                                         data_cols, delim)
+    #     print("Splitting data")
+    #     files, num_line_skip, data_cols = split_dataset(
+    #                                         files[0], dataset_split[0],
+    #                                         dataset_split[1], regex,
+    #                                         num_line_skip, data_cols, delim)
+
+    print("Starting general parse")
+    input_dataset = files[0]
+    base_path = "/".join(input_dataset.split("/")[:-1])
+    train_file = base_path + "/splitted_train_edges.txt"
+    valid_file = base_path + "/splitted_valid_edges.txt"
+    test_file = base_path + "/splitted_test_edges.txt"
+
+    files = [train_file, valid_file, test_file]
+    num_line_skip = 0
+    data_cols = list(range(len(data_cols)))
 
     for file in files:
         numlines = 0
@@ -309,12 +320,14 @@ def general_parser(files, format, output_dir, delim="", num_partitions=1,
                     f.write(bytes(edges))
                     i += chunksize
 
+            print("num partitions " + str(num_partitions))
             if num_partitions > 1:
                 f.seek(0)
-                edges = np.fromfile(train_out, dtype=dtype).reshape(-1, 3)
+                edges = np.fromfile(train_out, dtype=dtype).reshape(-1, len(format[0]))
                 edges, offsets = partition_edges(edges, num_partitions,
                                                  len(node_ids))
                 f.write(bytes(edges))
+                print("offset size " + str(len(offsets)))
                 with open(output_dir / Path("train_edges_partitions.txt"), "w") as g:
                     g.writelines([str(o) + "\n" for o in offsets])
 
@@ -322,6 +335,7 @@ def general_parser(files, format, output_dir, delim="", num_partitions=1,
         test_out = output_dir / Path("test_edges.pt")
         valid_out = output_dir / Path("valid_edges.pt")
         with open(valid_out, "wb") as f:
+            print("Writing validation at" + valid_out)
             for chunk in pd.read_csv(files[1], sep=delim, header=None,
                                      chunksize=chunksize,
                                      skiprows=num_line_skip, usecols=data_cols,
