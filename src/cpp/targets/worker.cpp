@@ -269,6 +269,18 @@ class WorkerNode {
         }
       }
     }
+
+    void flushPartitions(PartitionBuffer* partition_buffer){
+      PartitionedFile* partitioned_file = partition_buffer->getPartitionedFile();
+      std::vector<Partition *>& partition_table = partition_buffer->getPartitionTable();
+
+      for(int i = 0; i < avail_parts_.size(); i++) {
+        int part_idx = avail_parts_[i].idx;
+        // write partition data from memory to disk but don't clear the partition data pointer
+        partitioned_file->writePartition(partition_table[part_idx], false);
+      }
+    }
+
     void ServiceEvaluationRequest() {
       while (timestamp_ < num_epochs_) {
         auto options = torch::TensorOptions().dtype(torch::kInt32);
@@ -278,6 +290,10 @@ class WorkerNode {
         if (recv_work) {
           recv_work->wait();
           SPDLOG_INFO("Received sources from coordinator");
+
+          flushPartitions(pb_embeds_);
+          flushPartitions(pb_embeds_state_);
+
           for (int idx = 0; idx < num_partitions_; idx++) {
             int src = sources[0].data_ptr<int32_t>()[idx];
             SPDLOG_INFO("Partition {} is on worker {}.", idx, src);
@@ -644,7 +660,7 @@ int main(int argc, char* argv[]) {
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
   // auto dev = c10d::GlooDeviceFactory::makeDeviceForInterface("lo");
-  std::chrono::hours timeout(1);
+  std::chrono::hours timeout(24);
   auto options = c10d::ProcessGroupGloo::Options::create();
   options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("enp1s0f0"));
   options->timeout = timeout;

@@ -312,7 +312,7 @@ int main(int argc, char* argv[]) {
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
 
-  std::chrono::hours timeout(1);
+  std::chrono::hours timeout(24);
   auto options = c10d::ProcessGroupGloo::Options::create();
   options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
   options->timeout = timeout;
