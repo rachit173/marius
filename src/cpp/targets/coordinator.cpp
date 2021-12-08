@@ -308,7 +308,7 @@ int main(int argc, char* argv[]) {
   std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
   std::cout << "Total epochs: " << marius_options.training.num_epochs << std::endl;
 
-  string base_dir = "/mnt/data/Work/marius";
+  string base_dir = "/proj/uwmadison744-f21-PG0/groups/g007";
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
 
