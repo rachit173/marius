@@ -98,7 +98,9 @@ torch::Tensor Partition::ConvertMetaDataToTensor() {
 }
 
 torch::Tensor Partition::ConvertDataToTensor() {
-    assert(this->data_ptr_ != nullptr);
+    if(this->data_ptr_ == nullptr){
+        throw std::runtime_error("Partition::ConvertDataToTensor data_ptr_ is null");
+    }
 	torch::Tensor serialized_data = torch::from_blob(data_ptr_, {partition_size_, embedding_size_}, dtype_);
 	return serialized_data;
 }

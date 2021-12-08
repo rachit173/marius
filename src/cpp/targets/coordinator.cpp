@@ -228,7 +228,11 @@ class Coordinator {
     
     PartitionMetadata PartitionRequest(int srcRank) {
       // Assumes that total # of partitions >=  # of workers * Buffer capacity per worker
-      assert(!available_partitions_.empty());
+      if(available_partitions_.empty()) {
+        // Not available
+        SPDLOG_TRACE("Partitions not available for worker with rank: {}", srcRank);
+        return PartitionMetadata(-1, -1, timestamp_, num_partitions_);
+      }
 
       // Dispatch partition which can do maximum interactions considering the existing state of worker and already done interactions
       // and take the maximum
@@ -267,10 +271,6 @@ class Coordinator {
       }
       return response_partition;
       // TODO: If nothing was available from other workers' partitions --> Send partition owned by the same worker
-
-      // Not available
-      SPDLOG_TRACE("Partitions not available for worker with rank: {}", srcRank);
-      return PartitionMetadata(-1, -1, timestamp_, num_partitions_);
     }
     // TODO(scaling): Move to PartitionMetadata
     PartitionMetadata receivePartition(int srcRank) {
@@ -287,10 +287,10 @@ class Coordinator {
 
   private:
   std::shared_ptr<c10d::ProcessGroupGloo> pg_;
-  int num_partitions_;
-  int num_workers_;
-  int num_epochs_;
-  int epochs_per_eval_;
+  const int num_partitions_;
+  const int num_workers_;
+  const int num_epochs_;
+  const int epochs_per_eval_;
   std::vector<PartitionMetadata> available_partitions_;
   std::vector<vector<int>> in_process_partitions_;
   std::vector<vector<int>> processed_interactions_;

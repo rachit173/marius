@@ -268,6 +268,10 @@ class PartitionBuffer {
       return loaded_;
     }
 
+    std::mutex& getAdmitLock(){
+      return admit_lock_;
+    }
+
     void admitWithLock(Partition* partition);
 
     // Get Evictions

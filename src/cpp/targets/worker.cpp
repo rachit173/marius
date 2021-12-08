@@ -453,7 +453,8 @@ class WorkerNode {
     void sendPartitionFromBuffer(PartitionBuffer* partition_buffer, int src_rank, int partition_index){
         std::vector<Partition*>& partition_table = partition_buffer->getPartitionTable();
         PartitionedFile* partition_file = partition_buffer->getPartitionedFile();
-				torch::Tensor partition_metadata = partition_table[partition_index]->ConvertMetaDataToTensor();
+        // metadata: partition_id_, partition_size_, embedding_size_, idx_offset_, file_offset_
+        torch::Tensor partition_metadata = partition_table[partition_index]->ConvertMetaDataToTensor();
 				std::vector<torch::Tensor> tensors_to_send({partition_metadata});
         // send metadata
         auto send_serialized_partition = pg_->send(tensors_to_send, src_rank, tag_generator_.getTagWhenReceiverDataPath(src_rank));
@@ -463,17 +464,38 @@ class WorkerNode {
         // send partition data
         // 1. Read partition from disk
         // 2. Convert to tensor and send
-        partition_file->readPartition(send_buffer_, partition_table[partition_index]);
+        Partition *partition_to_be_sent = partition_table[partition_index];
+        torch::Tensor tensor_data_to_send;
+        try {
+          if(partition_to_be_sent->present_){
+            std::lock_guard<std::mutex> guard(partition_buffer->getAdmitLock());
+            tensor_data_to_send = partition_to_be_sent->ConvertDataToTensor();
+
+            std::vector<torch::Tensor> tensors_data_to_send({tensor_data_to_send});
+            // send partition data
+            auto send_part_data = pg_->send(tensors_data_to_send, src_rank, tag_generator_.getTagWhenReceiverDataPath(src_rank));
+            if (send_part_data){
+              send_part_data->wait();
+            }
+            return;
+          }
+        } catch(const std::exception& e){
+          std::cout << e.what() << std::endl;
+        }
+        //else
+        {
+          partition_file->readPartition(send_buffer_, partition_to_be_sent);
+          tensor_data_to_send = partition_table[partition_index]->ConvertDataToTensor();
+          std::vector<torch::Tensor> tensors_data_to_send({tensor_data_to_send});
+          // send partition data
+          auto send_part_data = pg_->send(tensors_data_to_send, src_rank, tag_generator_.getTagWhenReceiverDataPath(src_rank));
+          if (send_part_data){
+            send_part_data->wait();
+          }
+        }
         // Can be dispatched to co-ordinator but still be present in the buffer till not actually evicted
         // assert(!partition_table[partition_index]->present_);
 
-        torch::Tensor tensor_data_to_send = partition_table[partition_index]->ConvertDataToTensor();
-        std::vector<torch::Tensor> tensors_data_to_send({tensor_data_to_send});
-        // send partition data
-        auto send_part_data = pg_->send(tensors_data_to_send, src_rank, tag_generator_.getTagWhenReceiverDataPath(src_rank));
-        if (send_part_data) {
-          send_part_data->wait();
-        }
     }
     
     void ProcessPartitions() {
@@ -730,4 +752,5 @@ int main(int argc, char* argv[]) {
 6. Multi node communication
 7. Run in twitter data to observe bottlenecks
 8. Prefetching fix
+9. Convert Asserts to runtime errors
 */
