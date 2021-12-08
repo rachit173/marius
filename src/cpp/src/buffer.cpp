@@ -478,7 +478,6 @@ torch::Tensor PartitionBuffer::filterEvictedNegatives(std::vector<int> previous_
 void PartitionBuffer::waitRead(int64_t access_id) {
     if (marius_options.storage.prefetching || marius_options.communication.prefix=="") {
         std::unique_lock access_lock(access_lock_);
-        std::cout << std::endl;
         access_cv_.wait(access_lock, [this, access_id] { return access_id <= *admit_access_ids_itr_; });
         access_lock.unlock();
         access_cv_.notify_all();
@@ -604,9 +603,13 @@ void PartitionBuffer::admit(Partition *partition) {
     SPDLOG_TRACE("Admitting {}", partition->partition_id_);
     // TODO: We might evict something which is already present in the buffer. Optimize to avoid that!
     if (free_list_.empty()) {
-        // Partition *partition_to_evict = partition_table_[*evict_ids_itr_++];
         SPDLOG_TRACE("Waiting for evict partitions....");
-        Partition *partition_to_evict = std::get<1>(evict_partitions_->blocking_pop());
+        Partition *partition_to_evict;
+        if(marius_options.communication.prefix == ""){
+            partition_to_evict = partition_table_[*evict_ids_itr_++];
+        } else {
+            partition_to_evict = std::get<1>(evict_partitions_->blocking_pop());
+        }
         SPDLOG_TRACE("Evicting {}", partition_to_evict->partition_id_);
         evict(partition_to_evict);
         size_--;
