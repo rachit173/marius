@@ -172,3 +172,4 @@ src/cpp/third_party/libtorch/*
 data*/*
 output_dir*/*
 rendezvous_checkpoint
+stats/*
