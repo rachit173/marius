@@ -31,7 +31,8 @@ class Coordinator {
       int num_partitions,
       int num_workers,
       int num_epochs,
-      int epochs_per_eval
+      int epochs_per_eval,
+      bool gpu
     ):
     pg_(pg), 
     num_partitions_(num_partitions),
@@ -39,7 +40,8 @@ class Coordinator {
     tag_generator_(num_workers),
     num_epochs_(num_epochs),
     epochs_per_eval_(epochs_per_eval),
-    timestamp_(0) {
+    timestamp_(0),
+    epoch_timer_(gpu) {
       // setup
       available_partitions_.clear();
       in_process_partitions_.resize(num_workers_, vector<int>(num_partitions_, 0));
@@ -47,8 +49,10 @@ class Coordinator {
       for (int i = 0; i < num_partitions_; i++) {
         available_partitions_.push_back(PartitionMetadata(i, -1, timestamp_, num_partitions_));
       }
+      perf_metrics_label_ = "[Performance Metrics]";
     }
     void start_working() {
+      epoch_timer_.start();
       while (timestamp_ < num_epochs_) {
         std::cout << "Timestamp: " << timestamp_ << ", Total epochs: " << num_epochs_ << std::endl;
         torch::Tensor tensor = torch::zeros({1});
@@ -166,6 +170,10 @@ class Coordinator {
     }
     void CheckForEpochCompletion() {
       if (getCompletionRatio(timestamp_) >= 0.999) {
+        epoch_timer_.stop();
+        int64_t epoch_time = epoch_timer_.getDuration();
+
+        SPDLOG_DEBUG("{} ('event':\"Epoch Completion\", 'data':('epoch':{}, 'duration':{}))", perf_metrics_label_, timestamp_ + 1, (double) epoch_time / 1000);
         // TODO(scaling): Replace 3 by epochs_per_eval.
         if (timestamp_% epochs_per_eval_ == 0 || timestamp_+1 == num_epochs_) {
           // Blocks till worker 0 does not return the evaluation.
@@ -296,6 +304,8 @@ class Coordinator {
   std::vector<vector<int>> processed_interactions_;
   CoordinatorTagGenerator tag_generator_;
   int timestamp_;
+  std::string perf_metrics_label_;
+  Timer epoch_timer_;
 };
 
 
@@ -312,6 +322,17 @@ int main(int argc, char* argv[]) {
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
 
+  // Setup logging for coordinator
+  std::string log_file = marius_options.general.experiment_name;
+  MariusLogger marius_logger = MariusLogger(log_file);
+  spdlog::set_default_logger(marius_logger.main_logger_);
+  marius_logger.setConsoleLogLevel(marius_options.reporting.log_level);
+  
+  // Required for timer
+  bool gpu = false;
+  if (marius_options.general.device == torch::kCUDA) {
+      gpu = true;
+  }
   std::chrono::hours timeout(24);
   auto options = c10d::ProcessGroupGloo::Options::create();
   options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
@@ -320,7 +341,7 @@ int main(int argc, char* argv[]) {
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
     prefixstore, rank, world_size, options);
   int num_partitions = marius_options.storage.num_partitions;
-  Coordinator coordinator(pg, num_partitions, world_size-1, marius_options.training.num_epochs, epochs_per_eval);
+  Coordinator coordinator(pg, num_partitions, world_size-1, marius_options.training.num_epochs, epochs_per_eval, gpu);
   coordinator.start_working();
   coordinator.stop_working();
 }
