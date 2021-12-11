@@ -52,7 +52,8 @@ class WorkerNode {
       int capacity,
       int num_partitions,
       int num_workers,
-      int num_epochs
+      int num_epochs,
+      bool gpu
     ):
     pg_(pg), 
     rank_(rank),
@@ -61,13 +62,15 @@ class WorkerNode {
     num_workers_(num_workers),
     tag_generator_(rank, num_workers),
     num_epochs_(num_epochs),
-    timestamp_(0) {
+    timestamp_(0),
+    gpu_(gpu) {
       coordinator_rank_ = num_workers_; 
       sleep_time_ = 500; // us
       int partition_size_ = 10;
       int embedding_dims_ = 12;
       processed_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
       trained_interactions_.resize(num_partitions_, vector<int>(num_partitions_, 0));
+      perf_metrics_label_ = "[Performance Metrics]";
     }
     void start_working(DataSet* trainset, DataSet* evalset, 
                         Trainer* trainer, Evaluator* evaluator, 
@@ -185,7 +188,9 @@ class WorkerNode {
         SPDLOG_TRACE("Number of elements in available partitions: {}", size);
         while (size < capacity_) {
           SPDLOG_TRACE("Avail parts --> size: {}, capacity: {}", size, capacity_);
+
           PartitionMetadata p = receivePartition(coordinator_rank_);
+          SPDLOG_DEBUG("{} ('epoch': {}, 'worker': {}, 'event':\"Received Partition Location Info\", 'data':('partition index':{}, 'src':{}, 'timestamp':{}))", perf_metrics_label_, timestamp_ + 1, rank_, timestamp_ + 1, rank_, p.idx, p.src, p.timestamp);
           SPDLOG_TRACE("Received partition metadata from co-ordinator: Index: {}, source: {}, timestamp: {}", p.idx, p.src, p.timestamp);
           
           // Partition not available
@@ -230,6 +235,8 @@ class WorkerNode {
         send_work->wait();
       }
       part.src = rank_;
+      
+      SPDLOG_DEBUG("{} ('epoch': {}, 'worker': {}, 'event':\"Dispatched Partition\", 'data':('partition index':{}, 'src':{}))", perf_metrics_label_, timestamp_ + 1, rank_, part.idx, part.src);
       SPDLOG_TRACE("Dispatching partition {}, timestamp: {}. Worker timestamp: {}", part.idx, part.timestamp, timestamp_);
 
       pb_embeds_->addPartitionForEviction(part.idx);
@@ -294,6 +301,9 @@ class WorkerNode {
           flushPartitions(pb_embeds_);
           flushPartitions(pb_embeds_state_);
 
+          Timer timer = Timer(gpu_);
+          timer.start();
+          int recv_partitions_for_eval = 0;
           for (int idx = 0; idx < num_partitions_; idx++) {
             int src = sources[0].data_ptr<int32_t>()[idx];
             SPDLOG_INFO("Partition {} is on worker {}.", idx, src);
@@ -303,8 +313,14 @@ class WorkerNode {
             } else {
               // Transfer partition from worker `source`.
               receivePartition(idx, src);
+              recv_partitions_for_eval++;
             }
           }
+
+          timer.stop();
+          int64_t event_time = timer.getDuration();
+          SPDLOG_DEBUG("{} ('epoch': {}, 'worker': {}, 'event':\"Received Partitions for Evaluations\", 'data':('partitions received':{}, 'duration':{}))", perf_metrics_label_, timestamp_ + 1, rank_, recv_partitions_for_eval, rank_, event_time);
+    
           // Call evaluator.
           evaluator_->evaluate(true);
         } else {
@@ -324,8 +340,10 @@ class WorkerNode {
     void TransferPartitionsFromWorkerNodes(PartitionMetadata part) {
       if (part.src == -1) {
         // Already have the partition.
+        SPDLOG_DEBUG("{} ('epoch': {}, 'worker': {}, 'event':\"Partition Not Requested\", 'data':('partition index':{}, 'src':{}))", perf_metrics_label_, timestamp_ + 1, rank_, part.idx, part.src);
       } else if (part.src == rank_) {
         // Already have the partition.
+        SPDLOG_DEBUG("{} ('epoch': {}, 'worker': {}, 'event':\"Partition Not Requested\", 'data':('partition index':{}, 'src':{}))", perf_metrics_label_, timestamp_ + 1, rank_, part.idx, part.src);
       } else {
         receivePartition(part.idx, part.src);
       }
@@ -333,6 +351,7 @@ class WorkerNode {
       {
         forceToBuffer(pb_embeds_, part.idx);
         forceToBuffer(pb_embeds_state_, part.idx);
+        SPDLOG_DEBUG("{} ('epoch': {}, 'worker': {}, 'event':\"Forced to Buffer\", 'data':('partition index':{}))", perf_metrics_label_, timestamp_ + 1, rank_, part.idx);
       }
 
       // Add the received partitions to avail_parts_ vector.
@@ -351,9 +370,17 @@ class WorkerNode {
       if (send_work) {
         send_work->wait();
       }
+      
+      Timer timer = Timer(gpu_);
+      timer.start();
+        
       // Receive Partition for node embeddings and optimizer state
       receivePartitionToBuffer(pb_embeds_, src);
       receivePartitionToBuffer(pb_embeds_state_, src);
+      
+      timer.stop();
+      int64_t event_time = timer.getDuration();
+      SPDLOG_DEBUG("{} ('epoch': {}, 'worker': {}, 'event':\"Received Partition\", 'data':('partition index':{}, 'src':{}, 'dest': {}, 'duration':{}))", perf_metrics_label_, timestamp_ + 1, rank_, idx, src, rank_, event_time);
     }
     void receivePartitionToBuffer(PartitionBuffer *partition_buffer, int src) {
       // Receive metadata
@@ -460,9 +487,16 @@ class WorkerNode {
         // send partition metadata
         int part_idx = tensors[0].data_ptr<float>()[0];
 
+        Timer timer = Timer(gpu_);
+        timer.start();
+
         // Send Partition for node embeddings and optimizer state
         sendPartitionFromBuffer(pb_embeds_, src_rank, part_idx);
         sendPartitionFromBuffer(pb_embeds_state_, src_rank, part_idx);
+
+        timer.stop();
+        int64_t event_time = timer.getDuration();
+        SPDLOG_DEBUG("{} ('epoch': {}, 'worker': {}, 'event':\"Sent Partition\", 'data':('partition index':{}, 'src': {}, 'dest':{}, 'duration':{}))", perf_metrics_label_, timestamp_ + 1, rank_, part_idx, rank_, src_rank, event_time);
       }
     }
 
@@ -637,6 +671,7 @@ class WorkerNode {
   int embedding_dims_;
   int timestamp_;
   int num_epochs_;
+  bool gpu_;
   DataSet* trainset_;
   DataSet* evalset_;
   Trainer* trainer_;
@@ -647,6 +682,7 @@ class WorkerNode {
   PartitionBuffer* pb_embeds_;
   PartitionBuffer* pb_embeds_state_;
   WorkerTagGenerator tag_generator_;
+  std::string perf_metrics_label_;
 };
 
 
@@ -669,15 +705,15 @@ int main(int argc, char* argv[]) {
     prefixstore, rank, world_size, options);
   int num_partitions = marius_options.storage.num_partitions;
   int capacity = marius_options.storage.buffer_capacity;
-  WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1, marius_options.training.num_epochs);
-  std::string log_file = marius_options.general.experiment_name;
-  MariusLogger marius_logger = MariusLogger(log_file);
-  spdlog::set_default_logger(marius_logger.main_logger_);
-  marius_logger.setConsoleLogLevel(marius_options.reporting.log_level);
   bool gpu = false;
   if (marius_options.general.device == torch::kCUDA) {
       gpu = true;
   }
+  WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1, marius_options.training.num_epochs, gpu);
+  std::string log_file = marius_options.general.experiment_name;
+  MariusLogger marius_logger = MariusLogger(log_file);
+  spdlog::set_default_logger(marius_logger.main_logger_);
+  marius_logger.setConsoleLogLevel(marius_options.reporting.log_level);
   Timer preprocessing_timer = Timer(gpu);
   preprocessing_timer.start();
   SPDLOG_INFO("Start preprocessing");
