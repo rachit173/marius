@@ -351,7 +351,7 @@ PartitionBuffer::PartitionBuffer(int capacity, int num_partitions, int64_t parti
         dtype_size_ = 4;
     }
 
-    evict_partitions_ = new Queue<Partition *>(10); // TODO: Change size to some appropriate value
+    evict_partitions_ = new Queue<Partition *>(marius_options.storage.buffer_capacity); // TODO: Change size to some appropriate value
 
     embedding_size_ = embedding_size;
     total_embeddings_ = total_embeddings;

@@ -689,7 +689,7 @@ class WorkerNode {
 };
 
 
-int main(int argc, char* argv[]) {
+int worker_main(int argc, char* argv[]) {
   marius_options = parseConfig(argc, argv); // marius options is an extern variable form config.h that is globally used across the library.
   int rank = marius_options.communication.rank;
   int world_size = marius_options.communication.world_size;
@@ -794,7 +794,7 @@ int main(int argc, char* argv[]) {
   }
 
   freeTrainStorage(train_edges, eval_edges, test_edges, embeds, embeds_state, src_rel, src_rel_state, dst_rel, dst_rel_state);
-
+  return 0;
 }
 
 /*TODO:

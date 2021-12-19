@@ -8,10 +8,12 @@
 #include "model.h"
 #include "trainer.h"
 #include "util.h"
+#include <iostream>
 
 using std::get;
 
 void marius(int argc, char *argv[]) {
+    std::cout << "Starting Marius Dist." << std::endl;
     marius_options = parseConfig(argc, argv);
 
     std::string log_file = marius_options.general.experiment_name;

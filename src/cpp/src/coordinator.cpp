@@ -309,7 +309,7 @@ class Coordinator {
 };
 
 
-int main(int argc, char* argv[]) {
+int coordinator_main(int argc, char* argv[]) {
   auto marius_options = parseConfig(argc, argv);
   int rank = marius_options.communication.rank;
   int world_size = marius_options.communication.world_size;
@@ -346,4 +346,5 @@ int main(int argc, char* argv[]) {
   Coordinator coordinator(pg, num_partitions, world_size-1, marius_options.training.num_epochs, epochs_per_eval, gpu);
   coordinator.start_working();
   coordinator.stop_working();
+  return 0;
 }
