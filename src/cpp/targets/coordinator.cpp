@@ -173,7 +173,7 @@ class Coordinator {
         epoch_timer_.stop();
         int64_t epoch_time = epoch_timer_.getDuration();
 
-        SPDLOG_DEBUG("{} ('event':\"Epoch Completion\", 'data':('epoch':{}, 'duration':{}))", perf_metrics_label_, timestamp_ + 1, (double) epoch_time / 1000);
+        SPDLOG_DEBUG("{} ('event':\"Epoch Runtime\", 'data':('epoch':{}, 'duration':{}))", perf_metrics_label_, timestamp_ + 1, (double) epoch_time / 1000);
         // TODO(scaling): Replace 3 by epochs_per_eval.
         if (timestamp_% epochs_per_eval_ == 0 || timestamp_+1 == num_epochs_) {
           // Blocks till worker 0 does not return the evaluation.
@@ -182,6 +182,7 @@ class Coordinator {
         timestamp_++;
         updateInteractionsTimestamp(timestamp_);
         updateAvailablePartitionsTimestamp(timestamp_);
+        epoch_timer_.start();
         // Signal all workers for next epoch
         for (int rank = 0; rank < num_workers_; rank++) {
           bool signal_success = signalNextEpoch(rank);
@@ -323,16 +324,16 @@ int main(int argc, char* argv[]) {
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
 
   // Setup logging for coordinator
-  std::string log_file = marius_options.general.experiment_name;
+  std::string log_file = marius_options.general.experiment_name + "_coordinator";
   MariusLogger marius_logger = MariusLogger(log_file);
   spdlog::set_default_logger(marius_logger.main_logger_);
   marius_logger.setConsoleLogLevel(marius_options.reporting.log_level);
   
   // Required for timer
   bool gpu = false;
-  if (marius_options.general.device == torch::kCUDA) {
-      gpu = true;
-  }
+  // if (marius_options.general.device == torch::kCUDA) {
+  //     gpu = true;
+  // }
   std::chrono::hours timeout(24);
   auto options = c10d::ProcessGroupGloo::Options::create();
   options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));

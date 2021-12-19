@@ -706,11 +706,11 @@ int main(int argc, char* argv[]) {
   int num_partitions = marius_options.storage.num_partitions;
   int capacity = marius_options.storage.buffer_capacity;
   bool gpu = false;
-  if (marius_options.general.device == torch::kCUDA) {
-      gpu = true;
-  }
+  // if (marius_options.general.device == torch::kCUDA) {
+  //     gpu = true;
+  // }
   WorkerNode worker(pg, rank, capacity, num_partitions, world_size-1, marius_options.training.num_epochs, gpu);
-  std::string log_file = marius_options.general.experiment_name;
+  std::string log_file = marius_options.general.experiment_name + "_worker_" + std::to_string(rank);
   MariusLogger marius_logger = MariusLogger(log_file);
   spdlog::set_default_logger(marius_logger.main_logger_);
   marius_logger.setConsoleLogLevel(marius_options.reporting.log_level);
