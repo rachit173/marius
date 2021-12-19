@@ -98,6 +98,10 @@ class WorkerNode {
           SPDLOG_ERROR("Error in allocating memory for send buffer");
           exit(1);
         }
+        if (posix_memalign(&receive_buffer_, 4096, partition_size_ * embedding_size_ * dtype_size_)) {
+          SPDLOG_ERROR("Error in allocating memory for receive buffer");
+          exit(1);
+        }
         // TODO(scaling): Receive buffer.
       }
       // Need 
@@ -281,10 +285,10 @@ class WorkerNode {
       PartitionedFile* partitioned_file = partition_buffer->getPartitionedFile();
       std::vector<Partition *>& partition_table = partition_buffer->getPartitionTable();
 
-      for(int i = 0; i < avail_parts_.size(); i++) {
-        int part_idx = avail_parts_[i].idx;
+      for(int i = 0; i < num_partitions_; i++) {
+        if(!partition_table[i]->present_) continue;
         // write partition data from memory to disk but don't clear the partition data pointer
-        partitioned_file->writePartition(partition_table[part_idx], false);
+        partitioned_file->writePartition(partition_table[i], false);
       }
     }
 
@@ -401,15 +405,12 @@ class WorkerNode {
       
       // Receive partition data
       options = torch::TensorOptions().dtype(partition->dtype_);
-      // 1. Allocate memory
-      if(posix_memalign(&(partition->data_ptr_), 4096, partition->partition_size_ * partition->embedding_size_ * partition->dtype_size_)){
-        SPDLOG_ERROR("Error in allocating memory to receive data");
-        exit(1);
-      }
-      torch::Tensor tensor_data_recvd = torch::from_blob(partition->data_ptr_, {partition->partition_size_,partition->embedding_size_},partition->dtype_);              
+      // 1. Point data_ptr_ to the receive buffer
+      partition->data_ptr_ = receive_buffer_;
+      
+      torch::Tensor tensor_data_recvd = torch::from_blob(receive_buffer_, {partition->partition_size_,partition->embedding_size_},partition->dtype_);              
       // TODO: [Optimization]: class Single large space, any size of partition can be copied there
-      // then directly use pwrite to copy to correct portion of node embeddings                                                   
-      partition->tensor_ = tensor_data_recvd;
+      // then directly use pwrite to copy to correct portion of node embeddings
       
       // 2. Receive the tensor having data from the worker.
       std::vector<torch::Tensor> tensors_data_recvd({tensor_data_recvd});
@@ -422,6 +423,8 @@ class WorkerNode {
       std::vector<Partition *>& partition_table = partition_buffer->getPartitionTable();
       PartitionedFile *partition_file = partition_buffer->getPartitionedFile();
       partition_file->writePartition(partition.get());
+
+      partition->data_ptr_ = nullptr;
     }
 
     void forceToBuffer(PartitionBuffer *partition_buffer, int partition_idx){
@@ -692,13 +695,13 @@ int main(int argc, char* argv[]) {
   int world_size = marius_options.communication.world_size;
   std::string prefix = marius_options.communication.prefix;
   std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
-  string base_dir = "/proj/uwmadison744-f21-PG0/groups/g007";
+  string base_dir = "/mnt/data/Work/marius";
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
   // auto dev = c10d::GlooDeviceFactory::makeDeviceForInterface("lo");
   std::chrono::hours timeout(24);
   auto options = c10d::ProcessGroupGloo::Options::create();
-  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("enp1s0f0"));
+  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
   options->timeout = timeout;
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(

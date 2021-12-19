@@ -520,7 +520,10 @@ void PartitionBuffer::admitIfNotPresent(int64_t access_id, Partition *partition)
 }
 
 void PartitionBuffer::admitWithLock(Partition* partition){
-    assert(!partition->present_);
+    if(partition->present_) {
+        SPDLOG_WARN("AdmitWithLock: Partition {} already present in buffer", partition->partition_id_);
+        return;
+    }
     SPDLOG_TRACE("Admit called for partition {}", partition->partition_id_);
     admit_lock_.lock();
     admit(partition);
