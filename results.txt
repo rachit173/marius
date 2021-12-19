@@ -1,0 +1,2 @@
+Results with 1 worker:
+[info] [12/19/21 01:38:09.168] Auc: 0.985, Avg Ranks: 17.040, MRR: 0.808, Hits@1: 0.746, Hits@5: 0.881, Hits@10: 0.908, Hits@20: 0.931, Hits@50: 0.955, Hits@100: 0.967
