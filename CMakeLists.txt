@@ -112,7 +112,7 @@ endif ()
 
 target_compile_options(${PROJECT_NAME}
         PRIVATE -fomit-frame-pointer
-        PRIVATE -O1
+        PRIVATE -O3
         )
 
 IF(CMAKE_BUILD_TYPE MATCHES Debug AND MARIUS_USE_ASAN)

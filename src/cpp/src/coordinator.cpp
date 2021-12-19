@@ -88,7 +88,7 @@ class Coordinator {
         } else {
           std::cout << "Received an invalid command: " << command << "\n";       
         }
-        printCoordinatorState();
+        // printCoordinatorState();
         CheckForEpochCompletion();
       }
     }
@@ -168,7 +168,7 @@ class Coordinator {
       }
     }
     void CheckForEpochCompletion() {
-      if (getCompletionRatio(timestamp_) >= 0.999) {
+      if (getCompletionRatio(timestamp_) >= 0.99) {
         epoch_timer_.stop();
         int64_t epoch_time = epoch_timer_.getDuration();
 
