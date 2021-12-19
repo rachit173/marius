@@ -98,6 +98,10 @@ class WorkerNode {
           SPDLOG_ERROR("Error in allocating memory for send buffer");
           exit(1);
         }
+        if (posix_memalign(&receive_buffer_, 4096, partition_size_ * embedding_size_ * dtype_size_)) {
+          SPDLOG_ERROR("Error in allocating memory for receive buffer");
+          exit(1);
+        }
         // TODO(scaling): Receive buffer.
       }
       // Need 
@@ -401,15 +405,12 @@ class WorkerNode {
       
       // Receive partition data
       options = torch::TensorOptions().dtype(partition->dtype_);
-      // 1. Allocate memory
-      if(posix_memalign(&(partition->data_ptr_), 4096, partition->partition_size_ * partition->embedding_size_ * partition->dtype_size_)){
-        SPDLOG_ERROR("Error in allocating memory to receive data");
-        exit(1);
-      }
-      torch::Tensor tensor_data_recvd = torch::from_blob(partition->data_ptr_, {partition->partition_size_,partition->embedding_size_},partition->dtype_);              
+      // 1. Point data_ptr_ to the receive buffer
+      partition->data_ptr_ = receive_buffer_;
+      
+      torch::Tensor tensor_data_recvd = torch::from_blob(receive_buffer_, {partition->partition_size_,partition->embedding_size_},partition->dtype_);              
       // TODO: [Optimization]: class Single large space, any size of partition can be copied there
-      // then directly use pwrite to copy to correct portion of node embeddings                                                   
-      partition->tensor_ = tensor_data_recvd;
+      // then directly use pwrite to copy to correct portion of node embeddings
       
       // 2. Receive the tensor having data from the worker.
       std::vector<torch::Tensor> tensors_data_recvd({tensor_data_recvd});
@@ -422,6 +423,8 @@ class WorkerNode {
       std::vector<Partition *>& partition_table = partition_buffer->getPartitionTable();
       PartitionedFile *partition_file = partition_buffer->getPartitionedFile();
       partition_file->writePartition(partition.get());
+
+      partition->data_ptr_ = nullptr;
     }
 
     void forceToBuffer(PartitionBuffer *partition_buffer, int partition_idx){
