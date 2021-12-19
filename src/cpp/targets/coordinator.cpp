@@ -143,7 +143,6 @@ class Coordinator {
         }
       }
       for (const auto& part : available_partitions_) {
-        assert(part.idx > 0 && part.idx < num_partitions_);
         sources[part.idx] = part.src;
       }
       // 2. Send the `sources` array to worker 0.
@@ -318,7 +317,7 @@ int main(int argc, char* argv[]) {
   std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
   std::cout << "Total epochs: " << marius_options.training.num_epochs << std::endl;
 
-  string base_dir = "/proj/uwmadison744-f21-PG0/groups/g007";
+  string base_dir = "/mnt/data/Work/marius";
   auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
   auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
 
@@ -330,9 +329,9 @@ int main(int argc, char* argv[]) {
   
   // Required for timer
   bool gpu = false;
-  if (marius_options.general.device == torch::kCUDA) {
-      gpu = true;
-  }
+  // if (marius_options.general.device == torch::kCUDA) {
+  //     gpu = true;
+  // }
   std::chrono::hours timeout(24);
   auto options = c10d::ProcessGroupGloo::Options::create();
   options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
