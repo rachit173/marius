@@ -4,10 +4,10 @@ if [ "$#" -ne 5 ]; then
     exit 1
 fi
 
-cd build/ &&  cmake --build . --target worker coordinator -- -j 5 && cd ..
-BASE_DIR="/mnt/data/Work/marius"
-rm -f $BASE_DIR/rendezvous_checkpoint
-rm -f rendezvous_checkpoint
+# cd build/ &&  cmake --build . --target worker coordinator -- -j 5 && cd ..
+# BASE_DIR="/mnt/data/Work/marius"
+# rm -f $BASE_DIR/rendezvous_checkpoint
+# rm -f rendezvous_checkpoint
 rank=$1
 wsz=$2
 mode=$3
