@@ -186,6 +186,7 @@ struct CommunicationOptions {
     int rank;
     int world_size;
     string prefix;
+    string master;
 };
 
 struct ReportingOptions {

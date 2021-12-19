@@ -12,6 +12,7 @@ rank=$1
 wsz=$2
 mode=$3
 dataset=$4
+master=$5
 
 kill_previous_processes() {
   # Kill stat workers
@@ -57,7 +58,7 @@ stop_logging() {
 }
 
 run() {
-  $BASE_DIR/scripts/worker.sh $rank $wsz $mode $dataset
+  $BASE_DIR/scripts/worker.sh $rank $wsz $mode $dataset $master
 }
 
 main() {
