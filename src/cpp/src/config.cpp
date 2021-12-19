@@ -238,6 +238,7 @@ MariusOptions parseConfig(int64_t argc, char *argv[]) {
 
     // Communication options
     string prefix;
+    string master;
     int rank;
     int world_size;
 
