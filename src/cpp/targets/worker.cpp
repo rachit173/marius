@@ -281,10 +281,10 @@ class WorkerNode {
       PartitionedFile* partitioned_file = partition_buffer->getPartitionedFile();
       std::vector<Partition *>& partition_table = partition_buffer->getPartitionTable();
 
-      for(int i = 0; i < avail_parts_.size(); i++) {
-        int part_idx = avail_parts_[i].idx;
+      for(int i = 0; i < num_partitions_; i++) {
+        if(!partition_table[i]->present_) continue;
         // write partition data from memory to disk but don't clear the partition data pointer
-        partitioned_file->writePartition(partition_table[part_idx], false);
+        partitioned_file->writePartition(partition_table[i], false);
       }
     }
 
