@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ "$#" -ne 4 ]; then
+if [ "$#" -ne 1 ]; then
     echo "Illegal number of parameters"
     exit 1
 fi
@@ -8,10 +8,7 @@ fi
 BASE_DIR=$(pwd)
 echo $BASE_DIR
 
-rank=$1
-wsz=$2
-mode=$3
-dataset=$4
+dataset=$1
 
 kill_previous_processes() {
   # Kill stat workers
@@ -43,7 +40,7 @@ start_logging() {
   echo "-- Creating directories for logs"
   STATS_DIR=${BASE_DIR}/stats
   TS=$(date +%s)
-  DSTAT_FILE=$STATS_DIR/worker_${rank}_dstat_${TS}.csv
+  DSTAT_FILE=$STATS_DIR/marius_train_${dataset}_dstat_${TS}.csv
   echo "-- Writing DSTAT logs at $DSTAT_FILE"
   mkdir -p $STATS_DIR
   dstat -cdngyimrtpsy --fs --nvidia-gpu --output $DSTAT_FILE 1 > /dev/null &
@@ -57,7 +54,7 @@ stop_logging() {
 }
 
 run() {
-  $BASE_DIR/scripts/worker.sh $rank $wsz $mode $dataset
+   marius_train examples/training/configs/$dataset.ini
 }
 
 main() {
