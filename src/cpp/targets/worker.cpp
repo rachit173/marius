@@ -696,7 +696,7 @@ int main(int argc, char* argv[]) {
   std::string prefix = marius_options.communication.prefix;
   std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
   
-  std::string MASTER_IP = "10.0.0.149";
+  std::string MASTER_IP = marius_options.communication.master;
   int MASTER_PORT = 29501;
   auto tcpstore = c10::make_intrusive<c10d::TCPStore>(MASTER_IP, MASTER_PORT, 1, false);
   // auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);

@@ -1,5 +1,5 @@
 #!/bin/bash
-if [ "$#" -ne 4 ]; then
+if [ "$#" -ne 5 ]; then
     echo "Illegal number of parameters"
     exit 1
 fi
@@ -12,10 +12,11 @@ rank=$1
 wsz=$2
 mode=$3
 dataset=$4
+master=$5
 if [[ "$mode" = "gdb" ]]; then
     echo "GDB Execution on $dataset"
-    gdb --args ./build/coordinator ./examples/training/configs/$dataset.ini --communication.rank=$rank --communication.world_size=$wsz --communication.prefix=ABC
+    gdb --args ./build/coordinator ./examples/training/configs/$dataset.ini --communication.rank=$rank --communication.world_size=$wsz --communication.prefix=ABC --communication.master=$master
 else
     echo "Normal Execution on $dataset"
-    ./build/coordinator ./examples/training/configs/$dataset.ini --communication.rank=$rank --communication.world_size=$wsz --communication.prefix=ABC
+    ./build/coordinator ./examples/training/configs/$dataset.ini --communication.rank=$rank --communication.world_size=$wsz --communication.prefix=ABC --communication.master=$master
 fi
