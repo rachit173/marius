@@ -21,7 +21,7 @@
 
 
 #include <torch/torch.h>
-#include <c10d/FileStore.hpp>
+#include <c10d/TCPStore.hpp>
 #include <c10d/PrefixStore.hpp>
 #include <c10d/Store.hpp>
 #include <c10d/ProcessGroupGloo.hpp>
@@ -695,13 +695,17 @@ int main(int argc, char* argv[]) {
   int world_size = marius_options.communication.world_size;
   std::string prefix = marius_options.communication.prefix;
   std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
-  string base_dir = "/mnt/data/Work/marius";
-  auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
-  auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", filestore);
+  
+  std::string MASTER_IP = "10.0.0.149";
+  int MASTER_PORT = 29501;
+  auto tcpstore = c10::make_intrusive<c10d::TCPStore>(MASTER_IP, MASTER_PORT, 1, false);
+  // auto filestore = c10::make_intrusive<c10d::FileStore>(base_dir + "/rendezvous_checkpoint", 1);
+  auto prefixstore = c10::make_intrusive<c10d::PrefixStore>("abc", tcpstore);
   // auto dev = c10d::GlooDeviceFactory::makeDeviceForInterface("lo");
+ 
   std::chrono::hours timeout(24);
   auto options = c10d::ProcessGroupGloo::Options::create();
-  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("lo"));
+  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("ens5"));
   options->timeout = timeout;
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
