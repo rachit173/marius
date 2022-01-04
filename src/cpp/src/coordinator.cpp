@@ -22,7 +22,6 @@
 #include <c10d/ProcessGroupGloo.hpp>
 #include <c10d/GlooDeviceFactory.hpp>
 #include <c10d/frontend.hpp>
-namespace fs = std::filesystem;
 
 class Coordinator {
   public:
@@ -51,32 +50,33 @@ class Coordinator {
       }
       perf_metrics_label_ = "[Performance Metrics]";
     }
+    
     void start_working() {
+      int command;
+      int srcRank = -1;
+
       epoch_timer_.start();
       while (timestamp_ < num_epochs_) {
-        std::cout << "Timestamp: " << timestamp_ << ", Total epochs: " << num_epochs_ << std::endl;
+        SPDLOG_INFO("Timestamp: {}, Total epochs: {}", timestamp_, num_epochs_);
         torch::Tensor tensor = torch::zeros({1});
         std::vector<at::Tensor> tensors({tensor});
-        int command = tensors[0].data_ptr<float>()[0];
-
-        int srcRank = -1;
         auto recv_work = pg_->recvAnysource(tensors, tag_generator_.getCoordinatorCommandTag());
         if (recv_work) {
           recv_work->wait();
           srcRank = recv_work->sourceRank();
         }
-        // std::cout << "Received " << tensors[0] << " from " << srcRank << std::endl;
-        command = tensors[0].data_ptr<float>()[0];
-        std::cout << "Command: " << command << " From: " << srcRank << std::endl;
 
-        if (command == 1) {
+        command = tensors[0].data_ptr<float>()[0];
+        SPDLOG_TRACE("Command {} From {}", command, srcRank);
+
+        if (command == ALLOCATE_PARTITION) {
           PartitionMetadata part = PartitionRequest(srcRank);
-          sendPartition(part, srcRank);
+          part.sendPartition(srcRank);
           if (part.idx != -1) {
             in_process_partitions_[srcRank][part.idx] = 1;
           }
-        } else if (command == 2) {
-          PartitionMetadata part = receivePartition(srcRank);
+        } else if (command == RECEIVE_PARTITION) {
+          PartitionMetadata part = PartitionMetadata::receivePartition(srcRank);
           if (part.timestamp < timestamp_) {
             part.updateTimestamp(timestamp_);
           }
@@ -86,14 +86,13 @@ class Coordinator {
           in_process_partitions_[part.src][part.idx] = 0;
           syncInteractions(part);
         } else {
-          std::cout << "Received an invalid command: " << command << "\n";       
+          SPDLOG_WARN("Received an invalid command: {}", command);
         }
         printCoordinatorState();
         CheckForEpochCompletion();
       }
     }
     void stop_working() {
-
     }
   private:
     double getCompletionRatio(int ts) {
@@ -221,19 +220,6 @@ class Coordinator {
       }
     }
     
-    // TODO(scaling): Move to PartitionMetadata
-    bool sendPartition(PartitionMetadata part, int dstRank) {
-      const auto& tensor = part.ConvertToTensor();
-      std::vector<at::Tensor> tensors({tensor});
-      auto send_work = pg_->send(tensors, dstRank, tag_generator_.getWorkerSpecificCommunicationTag(dstRank));
-      if (send_work) {
-        send_work->wait();
-      } else {
-        return false;
-      }
-      return true;
-    }
-    
     PartitionMetadata PartitionRequest(int srcRank) {
       // Assumes that total # of partitions >=  # of workers * Buffer capacity per worker
       if(available_partitions_.empty()) {
@@ -280,32 +266,6 @@ class Coordinator {
       return response_partition;
       // TODO: If nothing was available from other workers' partitions --> Send partition owned by the same worker
     }
-    // TODO(scaling): Move to PartitionMetadata
-    PartitionMetadata receivePartition(int srcRank) {
-      torch::Tensor part_tensor = torch::zeros({num_partitions_+kPartititionMetadataSerde});
-      std::vector<torch::Tensor> part_tensor_vec({part_tensor});
-      auto recv_work = pg_->recv(part_tensor_vec, srcRank, tag_generator_.getWorkerSpecificCommunicationTag(srcRank));
-      if (recv_work) {
-        recv_work->wait();
-      }
-      std::cout << "tensor received " << part_tensor_vec[0] << std::endl;
-      return PartitionMetadata::ConvertToPartition(part_tensor_vec[0]);
-    }
-
-
-  private:
-  std::shared_ptr<c10d::ProcessGroupGloo> pg_;
-  const int num_partitions_;
-  const int num_workers_;
-  const int num_epochs_;
-  const int epochs_per_eval_;
-  std::vector<PartitionMetadata> available_partitions_;
-  std::vector<vector<int>> in_process_partitions_;
-  std::vector<vector<int>> processed_interactions_;
-  CoordinatorTagGenerator tag_generator_;
-  int timestamp_;
-  std::string perf_metrics_label_;
-  Timer epoch_timer_;
 };
 
 

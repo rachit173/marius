@@ -2,15 +2,7 @@
 #include <torch/torch.h>
 #include <vector>
 
-
-struct Request {
-  int type;
-};
-
-struct Response {
-  int partition_num;
-  int rank;
-};
+#include "communication.h"
 
 static const int kPartititionMetadataSerde = 4;
 
@@ -52,6 +44,30 @@ struct PartitionMetadata {
     }
     return tensor;
   }
+
+  bool sendPartition(int dstRank) {
+    const auto& tensor = ConvertToTensor();
+    std::vector<at::Tensor> tensors({tensor});
+    auto send_work = pg_->send(tensors, dstRank, tag_generator_.getWorkerSpecificCommunicationTag(dstRank));
+    if (send_work) {
+      send_work->wait();
+    } else {
+      return false;
+    }
+    return true;
+  }
+
+  static PartitionMetadata receivePartition(int srcRank) {
+    torch::Tensor part_tensor = torch::zeros({num_partitions_+kPartititionMetadataSerde});
+    std::vector<torch::Tensor> part_tensor_vec({part_tensor});
+    auto recv_work = pg_->recv(part_tensor_vec, srcRank, tag_generator_.getWorkerSpecificCommunicationTag(srcRank));
+    if (recv_work) {
+      recv_work->wait();
+    }
+    std::cout << "tensor received " << part_tensor_vec[0] << std::endl;
+    return ConvertToPartition(part_tensor_vec[0]);
+  }
+
   /**
    * @brief 
    * 

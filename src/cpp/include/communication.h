@@ -1,4 +1,3 @@
-
 class CoordinatorTagGenerator {
   public:
   CoordinatorTagGenerator(int num_workers): num_workers_(num_workers), self_rank_(num_workers) {
@@ -72,4 +71,11 @@ class WorkerTagGenerator {
   int offset3_;
   int offset4_;
   int offset5_;
+};
+
+enum Command
+{
+  UNUSED,
+  ALLOCATE_PARTITION,
+  RECEIVE_PARTITION
 };
