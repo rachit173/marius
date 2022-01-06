@@ -2,15 +2,7 @@
 #include <torch/torch.h>
 #include <vector>
 
-
-struct Request {
-  int type;
-};
-
-struct Response {
-  int partition_num;
-  int rank;
-};
+#include "communication.h"
 
 static const int kPartititionMetadataSerde = 4;
 
@@ -52,6 +44,7 @@ struct PartitionMetadata {
     }
     return tensor;
   }
+
   /**
    * @brief 
    * 
