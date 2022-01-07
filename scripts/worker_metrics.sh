@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ "$#" -ne 4 ]; then
+if [ "$#" -ne 6 ]; then
     echo "Illegal number of parameters"
     exit 1
 fi
@@ -13,6 +13,7 @@ wsz=$2
 mode=$3
 dataset=$4
 master=$5
+iface=$6
 
 kill_previous_processes() {
   # Kill stat workers
@@ -58,7 +59,7 @@ stop_logging() {
 }
 
 run() {
-  $BASE_DIR/scripts/worker.sh $rank $wsz $mode $dataset $master
+  $BASE_DIR/scripts/worker.sh $rank $wsz $mode $dataset $master $iface
 }
 
 main() {

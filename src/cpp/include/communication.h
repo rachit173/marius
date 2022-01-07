@@ -1,3 +1,5 @@
+#ifndef COMM_H
+#define COMM_H
 
 class CoordinatorTagGenerator {
   public:
@@ -73,3 +75,12 @@ class WorkerTagGenerator {
   int offset4_;
   int offset5_;
 };
+
+enum Command
+{
+  UNUSED,
+  ALLOCATE_PARTITION,
+  RECEIVE_PARTITION
+};
+
+#endif

@@ -696,6 +696,7 @@ int worker_main(int argc, char* argv[]) {
   std::string prefix = marius_options.communication.prefix;
   std::cout << "Rank : " << rank << ", " << "World size: " << world_size << ", " << "Prefix: " << prefix << std::endl;
   
+  std::string iface = marius_options.communication.iface;
   std::string MASTER_IP = marius_options.communication.master;
   int MASTER_PORT = 29501;
   auto tcpstore = c10::make_intrusive<c10d::TCPStore>(MASTER_IP, MASTER_PORT, 1, false);
@@ -705,7 +706,7 @@ int worker_main(int argc, char* argv[]) {
  
   std::chrono::hours timeout(24);
   auto options = c10d::ProcessGroupGloo::Options::create();
-  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface("ens5"));
+  options->devices.push_back(c10d::ProcessGroupGloo::createDeviceForInterface(iface));
   options->timeout = timeout;
   options->threads = options->devices.size() * 2;
   auto pg = std::make_shared<c10d::ProcessGroupGloo>(
