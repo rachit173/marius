@@ -239,6 +239,7 @@ MariusOptions parseConfig(int64_t argc, char *argv[]) {
     // Communication options
     string prefix;
     string master;
+    string iface;
     int rank;
     int world_size;
 
@@ -254,6 +255,7 @@ MariusOptions parseConfig(int64_t argc, char *argv[]) {
     s_var_map.push_back((OptInfo<std::string>){&s_edge_bucket_ordering, "Elimination", "storage", "edge_bucket_ordering"});
     s_var_map.push_back((OptInfo<std::string>){&prefix, "", "communication", "prefix"});
     s_var_map.push_back((OptInfo<std::string>){&master, "", "communication", "master"});
+    s_var_map.push_back((OptInfo<std::string>){&iface, "", "communication", "iface"});
     i_var_map.push_back((OptInfo<int>){&num_partitions, 1, "storage", "num_partitions", {1, INT32_MAX}});
     i_var_map.push_back((OptInfo<int>){&rank, 0, "communication", "rank", {0, INT32_MAX}});
     i_var_map.push_back((OptInfo<int>){&world_size, 0, "communication", "world_size", {0, INT32_MAX}});
@@ -683,7 +685,8 @@ MariusOptions parseConfig(int64_t argc, char *argv[]) {
         rank, 
         world_size,
         prefix,
-        master
+        master,
+        iface
     };
 
     TrainingOptions training_options = {

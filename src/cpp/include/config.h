@@ -187,6 +187,7 @@ struct CommunicationOptions {
     int world_size;
     string prefix;
     string master;
+    string iface;
 };
 
 struct ReportingOptions {
