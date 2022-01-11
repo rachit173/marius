@@ -63,7 +63,7 @@ void WorkerNode::receivePartition(int idx, int src) {
     std::vector<at::Tensor> request_tensors({request});
     auto send_work = pg_->send(request_tensors, src, tag_generator_.getTagWhenRequesterCommandPath(src));
     if (send_work) {
-    send_work->wait();
+        send_work->wait();
     }
     
     Timer timer = Timer(gpu_);
@@ -85,7 +85,7 @@ void WorkerNode::receivePartitionToBuffer(PartitionBuffer *partition_buffer, int
     std::vector<torch::Tensor> node_embed_tensors({node_embed_tensor});
     auto recv_work = pg_->recv(node_embed_tensors, src, tag_generator_.getTagWhenRequesterDataPath(src));
     if (recv_work) {
-    recv_work->wait();
+        recv_work->wait();
     }
     // Create Partition from metadata received
     auto partition = Partition::ConvertToPartition(node_embed_tensors[0]);
@@ -108,7 +108,7 @@ void WorkerNode::receivePartitionToBuffer(PartitionBuffer *partition_buffer, int
     std::vector<torch::Tensor> tensors_data_recvd({tensor_data_recvd});
     auto recv_data_work = pg_->recv(tensors_data_recvd, src, tag_generator_.getTagWhenRequesterDataPath(src));
     if (recv_data_work) {
-    recv_data_work->wait();
+        recv_data_work->wait();
     }
 
     // 3. Write fetched partition to partitioned file.
