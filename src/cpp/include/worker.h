@@ -86,13 +86,18 @@ private:
 
 	// Dispatch done partition
 	void DispatchPartitionsToCoordinator(PartitionMetadata part);
+	void printPartitionChange(vector<int>& avail_parts_replacement);
+	void updateProcessedPartitions();
 
 	// Flush partitions to disk for Evaluation
 	void flushPartitions(PartitionBuffer* partition_buffer);
 
 	
-	// Worker Policy: order of executing batches
+	// Worker Policy:
+	// Order of executing batches
 	void orderInteractions(vector<pair<int, int>>& interactions);
+	// Selecting partition(s) to evict
+	void evictPartitions(vector<int>& partitions_done, vector<int>& avail_parts_replacement);
 
 public:
     explicit WorkerNode(

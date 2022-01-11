@@ -87,6 +87,8 @@ void WorkerNode::ProcessNewPartition(PartitionMetadata p) {
     }
 }
 
+// #################################################################################3
+
 
 void WorkerNode::DispatchPartitionsToCoordinator(PartitionMetadata part) {
     // PartitionMetadata -> interactions ==> processed_interactions_row for index part.idx
@@ -112,6 +114,33 @@ void WorkerNode::DispatchPartitionsToCoordinator(PartitionMetadata part) {
     SPDLOG_TRACE("Dispatched partition {}", part.idx);
 }
 
+void WorkerNode::updateProcessedPartitions() {
+    // Update trained interaction matrix.
+    std::lock_guard<std::mutex> guard(next_epoch_mutex_);
+    const int num_batches_processed = pipeline_->getCompletedBatchesSize();
+    for (int i = 0; i < num_batches_processed; i++) {
+        PartitionBatch* batch = (PartitionBatch*)pipeline_->completed_batches_[i]; // 
+        int src_idx = batch->src_partition_idx_;
+        int dst_idx = batch->dst_partition_idx_;
+        if (trained_interactions_[src_idx][dst_idx] <= timestamp_ ) {
+            trained_interactions_[src_idx][dst_idx] = timestamp_+1;
+            SPDLOG_TRACE("Trained on partition: ({}, {})", src_idx, dst_idx);
+        }
+    }
+}
+
+void WorkerNode::printPartitionChange(vector<int>& avail_parts_replacement) {
+    // For debugging
+    if(avail_parts_.size() != avail_parts_replacement.size()){
+        SPDLOG_TRACE("Available parts changed...");
+        SPDLOG_TRACE("Old available parts:");
+        for(int i = 0; i < avail_parts_.size(); i++) SPDLOG_TRACE("{}", avail_parts_[i].idx);
+
+        SPDLOG_TRACE("New available parts:");
+        for (int i = 0; i < avail_parts_replacement.size(); i++) SPDLOG_TRACE("{}", avail_parts_replacement[i].idx);
+    }
+}
+// #####################################################################################
 
 void WorkerNode::flushPartitions(PartitionBuffer* partition_buffer) {
     PartitionedFile* partitioned_file = partition_buffer->getPartitionedFile();
