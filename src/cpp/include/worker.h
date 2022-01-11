@@ -27,6 +27,7 @@ class WorkerNode {
 private:
 	// Fields used for communication
 	std::shared_ptr<c10d::ProcessGroupGloo> pg_;
+	WorkerTagGenerator tag_generator_;
 	int rank_;
 	void* send_buffer_;
 	void* receive_buffer_;
@@ -65,7 +66,7 @@ private:
 	PartitionBufferStorage* embeds_state_;
 	PartitionBuffer* pb_embeds_;
 	PartitionBuffer* pb_embeds_state_;
-	WorkerTagGenerator tag_generator_;
+	
 	std::string perf_metrics_label_;
 
 	
