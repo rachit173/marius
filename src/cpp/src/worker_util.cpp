@@ -129,7 +129,7 @@ void WorkerNode::updateProcessedPartitions() {
     }
 }
 
-void WorkerNode::printPartitionChange(vector<int>& avail_parts_replacement) {
+void WorkerNode::printPartitionChange(vector<PartitionMetadata>& avail_parts_replacement) {
     // For debugging
     if(avail_parts_.size() != avail_parts_replacement.size()){
         SPDLOG_TRACE("Available parts changed...");

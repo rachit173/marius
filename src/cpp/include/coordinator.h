@@ -55,8 +55,8 @@ private:
     void handlePartitionAllocate(int srcRank);
     void handlePartitionReceive(int srcRank);
 
-    // Policy resides here
-    PartitionMetadata AllocatePartition(int srcRank);
+    // Coordinator Policy resides here
+    virtual PartitionMetadata AllocatePartition(int srcRank);
 
     bool sendPartition(PartitionMetadata part, int dstRank);
     PartitionMetadata receivePartition(int srcRank);

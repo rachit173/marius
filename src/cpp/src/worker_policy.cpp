@@ -29,12 +29,10 @@ void WorkerNode::orderInteractions(std::vector<pair<int, int>>& interactions) {
     // Default policy: lexicographic order of pair
 }
 
-// TODO: Decouple actual policy implementation from interface
 // Worker policy 2: Decide which partition should be evicted
-void WorkerNode::evictPartitions(vector<int>& to_be_evicted, vector<int>& to_be_retained) {
+void WorkerNode::evictPartitions(vector<PartitionMetadata>& to_be_evicted, vector<PartitionMetadata>& to_be_retained) {
   
-  
-  int avail_parts_size = to_be_retained.size();
+  int avail_parts_size = avail_parts_.size();
   // Find partitions with all trained interactions on worker.
   for (int i = 0; i < avail_parts_size; i++) {
     bool done = true;
