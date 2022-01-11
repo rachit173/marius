@@ -25,27 +25,30 @@ typedef std::shared_lock<RwLock> ReadLock;
 
 class WorkerNode {
 private:
+	// Fields used for communication
 	std::shared_ptr<c10d::ProcessGroupGloo> pg_;
 	int rank_;
-	int num_partitions_;
+	void* send_buffer_;
+	void* receive_buffer_;
+
+	// Configuration for distributed setup
 	int num_workers_;
 	int capacity_;
 	int coordinator_rank_;
 	int sleep_time_;
-	void* send_buffer_;
-	void* receive_buffer_;
+
+	// Shared data structure & mutexes
 	mutable std::shared_mutex avail_parts_rw_mutex_;
 	std::vector<PartitionMetadata> avail_parts_;
-	mutable std::shared_mutex dispatch_parts_rw_mutex_;
-	std::queue<PartitionMetadata> dispatch_parts_;
-	mutable std::shared_mutex transfer_receive_parts_rw_mutex_;
-	std::queue<PartitionMetadata> transfer_receive_parts_;
+	mutable std::mutex next_epoch_mutex_;
 	std::vector<std::thread> threads_;
-	mutable std::shared_mutex node_map_rw_mutex_;
-	std::vector<std::shared_ptr<torch::Tensor>> node_map;
+
+	// Progress-tracking structures
 	vector<vector<int>> processed_interactions_;
 	vector<vector<int>> trained_interactions_;
-	mutable std::mutex next_epoch_mutex_;
+
+	// Fields from Marius pipeline
+	int num_partitions_;
 	int partition_size_;
 	int dtype_size_;
 	int embedding_size_; 

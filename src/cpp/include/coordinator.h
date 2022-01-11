@@ -1,5 +1,5 @@
-#ifndef COORD_H
-#define COORD_H
+#ifndef COORDINATOR_H
+#define COORDINATOR_H
 
 #include "message.h"
 #include "config.h"
@@ -29,16 +29,23 @@
 class Coordinator
 {
 private:
+    // Fields used for Communication
     std::shared_ptr<c10d::ProcessGroupGloo> pg_;
+    CoordinatorTagGenerator tag_generator_;
+    
+    // Configuration
     const int num_partitions_;
     const int num_workers_;
     const int num_epochs_;
     const int epochs_per_eval_;
+    
+    // Progress-tracking structures
     std::vector<PartitionMetadata> available_partitions_;
     std::vector<vector<int>> in_process_partitions_;
     std::vector<vector<int>> processed_interactions_;
-    CoordinatorTagGenerator tag_generator_;
     int timestamp_;
+    
+    // Tracking
     std::string perf_metrics_label_;
     Timer epoch_timer_;
 
@@ -52,6 +59,7 @@ private:
     void Evaluation();
     //#########################################
     
+    // Handlers
     void handlePartitionAllocate(int srcRank);
     void handlePartitionReceive(int srcRank);
 

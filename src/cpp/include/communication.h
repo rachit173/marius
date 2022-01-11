@@ -1,5 +1,5 @@
-#ifndef COMM_H
-#define COMM_H
+#ifndef COMMUNICATION_H
+#define COMMUNICATION_H
 
 class CoordinatorTagGenerator {
   public:
