@@ -165,3 +165,11 @@ Thumbs.db
 
 
 # End of https://www.toptal.com/developers/gitignore/api/python
+
+
+src/cpp/third_party/libtorch/*
+
+data*/*
+output_dir*/*
+rendezvous_checkpoint
+stats/*

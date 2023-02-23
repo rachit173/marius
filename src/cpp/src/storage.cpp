@@ -16,7 +16,7 @@
 
 using std::ios;
 using std::ios_base;
-
+namespace fs = std::filesystem;
 PartitionBufferStorage::PartitionBufferStorage(string filename, int64_t dim0_size, int64_t dim1_size, torch::ScalarType dtype, int64_t capacity, bool embeddings) {
     filename_ = filename;
     dim0_size_ = dim0_size;
@@ -337,13 +337,13 @@ void FlatFile::indexPut(Indices indices, torch::Tensor values) {
 
 void FlatFile::move(string new_filename) {
     unload(false);
-    std::filesystem::rename(filename_, new_filename);
+    fs::rename(filename_, new_filename);
     load();
 }
 
 void FlatFile::copy(string new_filename, bool rename) {
     unload(false);
-    std::filesystem::copy_file(filename_, new_filename, std::filesystem::copy_options::update_existing);
+    fs::copy_file(filename_, new_filename, fs::copy_options::update_existing);
     if (rename) {
         filename_ = new_filename;
     }

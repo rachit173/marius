@@ -6,10 +6,14 @@
 
 #include "logger.h"
 
+#include <mutex>
+
 using std::get;
 using std::make_pair;
 using std::forward_as_tuple;
 using std::tie;
+using std::mutex;
+using std::lock_guard;
 
 string getThreadStatusName(ThreadStatus status) {
     switch (status) {
@@ -22,14 +26,6 @@ string getThreadStatusName(ThreadStatus status) {
     }
 }
 
-template<class T>
-Queue<T>::Queue(uint max_size) {
-    queue_ = std::deque<T>();
-    max_size_ = max_size;
-    mutex_ = new std::mutex();
-    cv_ = new std::condition_variable();
-    expecting_data_ = true;
-}
 
 Worker::Worker(Pipeline *pipeline, bool *paused, ThreadStatus *status) {
     pipeline_ = pipeline;
@@ -44,16 +40,39 @@ void LoadEmbeddingsWorker::run() {
         while (!*paused_) {
             *status_ = ThreadStatus::WaitPop;
             std::unique_lock lock(*pipeline_->max_batches_lock_);
-            if ((pipeline_->batches_in_flight_ < pipeline_->max_batches_in_flight_) && pipeline_->admitted_batches_ < pipeline_->data_set_->getNumBatches()) {
+            SPDLOG_TRACE("In-flight batches: {}, Admitted batches: {}", pipeline_->batches_in_flight_, pipeline_->admitted_batches_);
+            int64_t max_batches = pipeline_->data_set_->getNumBatches();
+            if (marius_options.communication.prefix != "" && pipeline_->train_ == true) {
+                max_batches = 1e12;
+            }
+            if ((pipeline_->batches_in_flight_ < pipeline_->max_batches_in_flight_) && pipeline_->admitted_batches_ < max_batches) {
                 pipeline_->admitted_batches_++;
                 pipeline_->batches_in_flight_++;
                 lock.unlock();
 
                 *status_ = ThreadStatus::Running;
-                Batch *batch = pipeline_->data_set_->getBatch();
+                // TODO(scaling):
+                // The Load Embedding worker for both CPU and GPU
+                // get's the next batch using the following API.
+                // Thus, the pipeline does not require much change
+                // as long as it can get the correct next batch from
+                // the call getBatch().
+                SPDLOG_TRACE("Getting Batch....");
+                Batch* batch;
+                SPDLOG_TRACE("Pipeline train is {}", pipeline_->train_);
+                if (marius_options.communication.prefix == "" || pipeline_->train_ == false) {
+                    batch = pipeline_->data_set_->getBatch();
+                } else {
+                    batch = pipeline_->data_set_->getBatchScaling();
+                }
+
+
                 if (batch == nullptr) {
+                    SPDLOG_ERROR("Got a null batch ptr.");
                     break;
                 }
+                SPDLOG_TRACE("Got Batch with partitions: ({}, {})", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
+
                 batch->timer_.start();
                 SPDLOG_TRACE("Admitting Batch: {}", batch->batch_id_);
 
@@ -65,8 +84,10 @@ void LoadEmbeddingsWorker::run() {
                 push_queue->blocking_push(batch);
             } else {
                 // wait until we can try to grab a batch again
+                SPDLOG_TRACE("Wait until we can try to grab a batch again");
                 pipeline_->max_batches_cv_->wait(lock);
                 lock.unlock();
+                SPDLOG_TRACE("Woken up from sleep");
             }
         }
         *status_ = ThreadStatus::Paused;
@@ -296,7 +317,16 @@ void UpdateEmbeddingsWorker::run() {
             pipeline_->max_batches_cv_->notify_one();
             pipeline_->edges_processed_ += batch->batch_size_;
             batch->clear();
-            SPDLOG_TRACE("Completed: {}", batch->batch_id_);
+            mutex* m;
+            vector<Batch*>* v;
+            if (marius_options.general.device == torch::kCUDA) {
+                lock_guard<mutex> guard(((PipelineGPU*)pipeline_)->completed_batches_lock_);
+                ((PipelineGPU*)pipeline_)->completed_batches_.push_back(batch);
+            } else {
+                lock_guard<mutex> guard(((PipelineCPU*)pipeline_)->completed_batches_lock_);
+                ((PipelineCPU*)pipeline_)->completed_batches_.push_back(batch);
+            }
+            SPDLOG_TRACE("Completed: {}, ({}, {})", batch->batch_id_, ((PartitionBatch*)batch)->src_partition_idx_, ((PartitionBatch*)batch)->dst_partition_idx_);
 
             int64_t num_batches_per_log = pipeline_->data_set_->getNumBatches() / marius_options.reporting.logs_per_epoch;
 
@@ -381,7 +411,7 @@ PipelineCPU::PipelineCPU(DataSet *data_set, Model *model, bool train, struct tim
     model_ = model;
     train_ = train;
     edges_processed_ = 0;
-
+    completed_batches_.reserve(100000);
     if (train_) {
         loaded_batches_ = new Queue<Batch *>(marius_options.training_pipeline.embeddings_host_queue_size);
         prepped_batches_ = new Queue<Batch *>(marius_options.training_pipeline.embeddings_host_queue_size);
@@ -434,6 +464,7 @@ PipelineCPU::~PipelineCPU() {
 }
 
 bool Pipeline::isDone() {
+    // return completedScaling;
     return (batches_in_flight_ <= 0) && admitted_batches_ == data_set_->getNumBatches();
 }
 

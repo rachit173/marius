@@ -13,3 +13,6 @@
 [submodule "src/cpp/third_party/inih"]
 	path = src/cpp/third_party/inih
 	url = https://github.com/jtilly/inih.git
+[submodule "src/cpp/third_party/gloo"]
+	path = src/cpp/third_party/gloo
+	url = https://github.com/facebookincubator/gloo.git

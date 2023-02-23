@@ -9,12 +9,14 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include <queue>
 
 #include "batch.h"
 #include "config.h"
 #include "datatypes.h"
 #include "logger.h"
 #include "storage.h"
+#include "channel.h"
 
 using std::map;
 using std::vector;
@@ -23,7 +25,8 @@ using std::mutex;
 using std::pair;
 using std::forward_as_tuple;
 using std::unique_ptr;
-
+using std::queue;
+using std::get;
 /**
  * Represents a training or evaluation set for graph embedding. Iterates over batches and updates model parameters during training.
  */
@@ -42,9 +45,11 @@ class DataSet {
     // batch ordering
     vector<int64_t> edge_bucket_sizes_;                  /**< Total number of edges in each edge bucket */
     vector<Batch *> batches_;                            /**< Ordering of the batch objects that will be processed */
+    Queue<Batch *> *batches_scaling_;                     /**< Queue of batches ready to process **/
     vector<Batch *>::iterator batch_iterator_;           /**< Iterator for batches_ */
     mutex *batch_lock_;                                  /**< Mutex for batches_ and batch_iterator_ */
-
+    mutex *batches_scaling_lock_;                        /**< Mutex for batches_scaling_ queue. */
+    bool has_next_;
     // used for evaluation
     map<pair<int, int>, vector<int>> src_map_;           /**< Map keyed by the source node and relation ids, where the destination node is the value. Provides fast lookups for edge existence */
     map<pair<int, int>, vector<int>> dst_map_;           /**< Map keyed by the destination node and relation ids, where the source node is the value. Provides fast lookups for edge existence */
@@ -90,6 +95,12 @@ class DataSet {
      * @return Pointer to the next batch object to be processed
      */
     Batch *nextBatch();
+
+    /**
+     * Returns the next uninitialized batch from the batches_scaling_ in a thread safe manner.
+     * @return Pointer to the next batch object to be processed
+     */
+    Batch *nextBatchScaling();
 
     /**
      * Initializes the batches for a single epoch
@@ -151,6 +162,14 @@ class DataSet {
     Batch *getBatch();
 
     /**
+     * Get Batch using communcation with coordinator and other workers.
+     */
+    Batch *getBatchScaling();
+    /**
+     * Add batch specified by the src and dst id to batches_scaling_ queue.
+     */
+    void addBatchScaling(int src, int dst);
+    /**
      * Loads edges and samples negatives to construct a batch
      * @param batch: Batch object to load edges and samples into.
      */
@@ -202,6 +221,15 @@ class DataSet {
         batch_lock_->lock();
         bool ret = batch_iterator_ != batches_.end();
         batch_lock_->unlock();
+        return ret;
+    }
+
+    /**
+     * @return Returns true if there are batches left to process, if false there are no batches left to process and the epoch is complete
+     */
+    bool hasNextBatchScaling() {
+        std::unique_lock batch_lock(*batches_scaling_lock_);
+        bool ret = batch_iterator_ != batches_.end();
         return ret;
     }
 
@@ -281,6 +309,7 @@ class DataSet {
 
     std::atomic<int64_t> batches_processed_;
 };
+
 
 #endif //MARIUS_DATASET_H
 

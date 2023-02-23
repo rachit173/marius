@@ -1,0 +1,6 @@
+[ 28%] Built target spdlog
+[ 32%] Building CXX object CMakeFiles/marius.dir/src/cpp/src/pipeline.cpp.o
+CMakeFiles/marius.dir/build.make:257: recipe for target 'CMakeFiles/marius.dir/src/cpp/src/pipeline.cpp.o' failed
+CMakeFiles/Makefile2:379: recipe for target 'CMakeFiles/marius.dir/all' failed
+CMakeFiles/Makefile2:440: recipe for target 'CMakeFiles/worker.dir/rule' failed
+Makefile:231: recipe for target 'worker' failed

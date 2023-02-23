@@ -3,9 +3,10 @@
 //
 
 #include "dataset.h"
-
+#include "channel.h"
 #include "ordering.h"
 
+#include<iostream>
 using std::get;
 using std::make_pair;
 using std::forward_as_tuple;
@@ -18,7 +19,9 @@ DataSet::DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storag
     current_negative_id_ = 0;
     epochs_processed_ = 0;
     batches_processed_ = 0;
+    batches_scaling_ = new Queue<Batch *>(marius_options.storage.buffer_capacity*10);
     batch_lock_ = new std::mutex();
+    batches_scaling_lock_ = new std::mutex();
     negative_lock_ = new std::mutex();
     storage_loaded_ = false;
 
@@ -36,14 +39,31 @@ DataSet::DataSet(Storage *edges, Storage *embeddings, Storage *emb_state, Storag
     initializeBatches();
     batch_iterator_ = batches_.begin();
     timestamp_ = global_timestamp_allocator.getTimestamp();
-
+    std::cout << "Initialize batches " << batches_.size() << std::endl;
+    for (auto batch: batches_) {
+        std::cout << "Batch id: " << batch->batch_id_ << ", ";
+        std::cout << "Batch size: " << batch->batch_size_ << ", ";
+        std::cout << "Start idx: " << batch->start_idx_ << ", ";
+        std::cout << "Src partition idx: " << ((PartitionBatch*)batch)->src_partition_idx_ << ", ";
+        std::cout << "Dst partition idx: " << ((PartitionBatch*)batch)->dst_partition_idx_ << ", ";
+        std::cout << std::endl;
+    }
     if (marius_options.storage.embeddings == BackendType::PartitionBuffer) {
         SPDLOG_DEBUG("Setup partition ordering");
         batches_ = ((PartitionBufferStorage *) node_embeddings_)->shuffleBeforeEvictions(batches_);
         batch_iterator_ = batches_.begin();
         SPDLOG_DEBUG("Batches shuffled");
-        ((PartitionBufferStorage *) node_embeddings_)->setOrdering(batches_);
-        ((PartitionBufferStorage *) node_embeddings_optimizer_state_)->setOrdering(batches_);
+        // TODO(scaling): Done
+        // Need to remove set Ordering function
+        // to avoid static ordering
+        if (marius_options.communication.prefix == "") {
+            // Single node execution.
+            ((PartitionBufferStorage *) node_embeddings_)->setOrdering(batches_);
+            ((PartitionBufferStorage *) node_embeddings_optimizer_state_)->setOrdering(batches_);
+        }  else {
+            // Multi-node execution.
+        }
+
         SPDLOG_DEBUG("Edge bucket ordering set");
     }
 }
@@ -56,6 +76,7 @@ DataSet::DataSet(Storage *train_edges, Storage *eval_edges, Storage *test_edges,
     epochs_processed_ = 0;
     batches_processed_ = 0;
     batch_lock_ = new std::mutex();
+    batches_scaling_lock_ = new std::mutex();
     negative_lock_ = new std::mutex();
     storage_loaded_ = false;
 
@@ -126,6 +147,7 @@ DataSet::DataSet(Storage *test_edges, Storage *embeddings, Storage *src_relation
     epochs_processed_ = 0;
     batches_processed_ = 0;
     batch_lock_ = new std::mutex();
+    batches_scaling_lock_ = new std::mutex();
     negative_lock_ = new std::mutex();
     storage_loaded_ = false;
 
@@ -161,6 +183,7 @@ DataSet::DataSet(Storage *test_edges, Storage *embeddings, Storage *src_relation
 DataSet::~DataSet() {
     clearBatches();
     delete batch_lock_;
+    delete batches_scaling_lock_;
     delete negative_lock_;
 
     if (marius_options.storage.embeddings == BackendType::PartitionBuffer && !train_) {
@@ -179,6 +202,11 @@ void DataSet::initializeBatches() {
     if (marius_options.storage.embeddings == BackendType::PartitionBuffer && train_) {
         SPDLOG_DEBUG("Getting batches from partitions");
         edge_bucket_sizes_ = edges_->getEdgeBucketSizes();
+        std::cout << "Edge bucket sizes" << std::endl;
+        for (auto sz: edge_bucket_sizes_) {
+            std::cout << sz << ", ";
+        }
+        std::cout << std::endl;
         for (auto iter = edge_bucket_sizes_.begin(); iter != edge_bucket_sizes_.end(); iter++) {
             batch_size = *iter;
             PartitionBatch *curr_batch = new PartitionBatch(train_);
@@ -197,7 +225,20 @@ void DataSet::initializeBatches() {
         batches_ = batches;
         auto ordered_batches = applyOrdering(batches_);
         batches_ = ordered_batches;
-        splitBatches();
+        // TODO(scaling): The split batches
+        // splits batches into smaller batches if 
+        // if their size is greater max_batch_size
+        // Currently I am unsure how this would fit
+        // into our model so it's better if we don't use it 
+        // for now for multi node training.
+        if (marius_options.communication.prefix == "") {
+            // Use splits when not using communication.
+            SPDLOG_INFO("Splitting batches");
+            splitBatches();
+        } else {
+            SPDLOG_INFO("Not splitting batches");
+        }
+
         SPDLOG_DEBUG("Split edge buckets into batches");
     } else {
         SPDLOG_DEBUG("Getting batches from edge list");
@@ -292,6 +333,7 @@ void DataSet::clearBatches() {
     batches_ = std::vector<Batch *>();
 }
 
+// TODO(scaling): Change point.
 Batch *DataSet::getBatch() {
     Batch *batch = nextBatch();
     if (batch == nullptr) {
@@ -312,6 +354,64 @@ Batch *DataSet::getBatch() {
     return batch;
 }
 
+Batch *DataSet::getBatchScaling() {
+    Batch *batch = nextBatchScaling();
+    if (batch == nullptr) {
+        SPDLOG_ERROR("Batch is NULL. Should not reach here!!");
+        return batch;
+    }
+
+    SPDLOG_TRACE("Starting Batch. ID {}, Starting Index {}, Batch Size {} ", batch->batch_id_, batch->start_idx_, batch->batch_size_);
+    globalSample(batch);
+
+    batch->accumulateUniqueIndices();
+
+    if (!train_ && marius_options.evaluation.filtered_evaluation) {
+        setEvalFilter(batch);
+    }
+
+    loadCPUParameters(batch);
+
+    return batch;
+}
+
+void DataSet::addBatchScaling(int src, int dst) {
+    // Find the batch specified by src and dst.
+    Batch* batch = nullptr;
+    // TODO(scaling): replace the search with a map based lookup.
+    for (auto b: batches_) {
+        if((src == ((PartitionBatch*)b)->src_partition_idx_)
+            && dst == (((PartitionBatch*)b)->dst_partition_idx_)) {
+                batch = b;
+                break;
+            }
+    }
+    if (batch == nullptr) {
+        SPDLOG_ERROR("Could not find the batch in batches_");
+        exit(1);
+        // return;
+    }
+    // Add the batch to batches_scaling queue
+    {
+        // std::unique_lock batch_lock(*batches_scaling_lock_);
+        batches_scaling_->blocking_push(batch);
+        SPDLOG_TRACE("Pushed batch with src {} and dst {} into queue", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
+    }
+}
+
+// TODO(scaling): use batches_scaling_ queue and batches_scaling_ lock
+Batch *DataSet::nextBatchScaling() {
+    SPDLOG_TRACE("Called NextBatchScaling... Waiting for popping element from queue");
+    Batch *batch = get<1>(batches_scaling_->blocking_pop());
+    SPDLOG_TRACE("Got next batch from queue: ({}, {})", ((PartitionBatch *)batch)->src_partition_idx_, ((PartitionBatch *)batch)->dst_partition_idx_);
+
+    current_edge_ += batch->batch_size_;
+    return batch;
+}
+// TODO(scaling): Following funtion loads
+// a batch using the batch iterator
+// we want to modify the batch_iterator
+// to make it not be dependent on a vector
 Batch *DataSet::nextBatch() {
     std::unique_lock batch_lock(*batch_lock_);
     Batch *batch;
@@ -766,8 +866,14 @@ void DataSet::nextEpoch() {
             ((PartitionBufferStorage *) node_embeddings_optimizer_state_)->sync();
             initializeBatches();
             batches_ = ((PartitionBufferStorage *) node_embeddings_)->shuffleBeforeEvictions(batches_);
-            ((PartitionBufferStorage *) node_embeddings_)->setOrdering(batches_);
-            ((PartitionBufferStorage *) node_embeddings_optimizer_state_)->setOrdering(batches_);
+            // TODO(scaling): Done.
+            if (marius_options.communication.prefix == "") {
+                // Single node execution.
+                ((PartitionBufferStorage *) node_embeddings_)->setOrdering(batches_);
+                ((PartitionBufferStorage *) node_embeddings_optimizer_state_)->setOrdering(batches_);
+            }  else {
+                // Multi-node execution.
+            }
         }
     }
 

@@ -146,7 +146,3 @@ void marius(int argc, char *argv[]) {
         freeEvalStorage(test_edges, embeddings, src_rel, dst_rel);
     }
 }
-
-int main(int argc, char *argv[]) {
-    marius(argc, argv);
-}

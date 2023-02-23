@@ -47,116 +47,6 @@ tuple<Indices, Indices> getIntersection(Indices ind1, Indices ind2, torch::Devic
 
 torch::Tensor getMask(EdgeList all_edges, EdgeList batch_edges);
 
-template<class T>
-class Queue {
-  private:
-    uint max_size_;
-  public:
-    std::deque<T> queue_;
-    std::mutex *mutex_;
-    std::condition_variable *cv_;
-    std::atomic<bool> expecting_data_;
-
-    Queue<T>(uint max_size);
-
-    bool push(T item) {
-        bool result = true;
-        if (isFull()) {
-            result = false;
-        } else {
-            queue_.push_back(item);
-        }
-        return result;
-    }
-
-    void blocking_push(T item) {
-        bool pushed = false;
-        while (!pushed) {
-            std::unique_lock lock(*mutex_);
-            pushed = push(item);
-            if (!pushed) {
-                cv_->wait(lock);
-            } else {
-                cv_->notify_all();
-            }
-            lock.unlock();
-        }
-    }
-
-    tuple<bool, T> pop() {
-        bool result = true;
-        T item;
-        if (isEmpty()) {
-            result = false;
-        } else {
-            item = queue_.front();
-            queue_.pop_front();
-        }
-        return forward_as_tuple(result, item);
-    }
-
-    tuple<bool, T> blocking_pop() {
-        bool popped = false;
-        T item = nullptr;
-        while (!popped && expecting_data_) {
-            std::unique_lock lock(*mutex_);
-            auto tup = pop();
-            popped = get<0>(tup);
-            item = get<1>(tup);
-            if (!popped) {
-                cv_->wait(lock);
-            } else {
-                cv_->notify_all();
-            }
-            lock.unlock();
-        }
-        return forward_as_tuple(popped, item);
-    }
-
-    void lock() {
-        mutex_->lock();
-    }
-
-    void unlock() {
-        mutex_->unlock();
-    }
-
-    void flush() {
-        lock();
-        queue_ = std::deque<T>();
-        unlock();
-    }
-
-    int size() {
-        return queue_.size();
-    }
-
-    bool isFull() {
-        return queue_.size() == max_size_;
-    }
-
-    bool isEmpty() {
-        return queue_.size() == 0;
-    }
-
-    uint getMaxSize() {
-        return max_size_;
-    }
-
-    typedef typename std::deque<T> queue_type;
-
-    typedef typename queue_type::iterator iterator;
-    typedef typename queue_type::const_iterator const_iterator;
-
-    inline iterator begin() noexcept { return queue_.begin(); }
-
-    inline const_iterator cbegin() const noexcept { return queue_.cbegin(); }
-
-    inline iterator end() noexcept { return queue_.end(); }
-
-    inline const_iterator cend() const noexcept { return queue_.cend(); }
-};
-
 class Pipeline {
   public:
     DataSet *data_set_;
@@ -169,7 +59,8 @@ class Pipeline {
     atomic<int64_t> edges_processed_;
     mutex timestamp_lock_;
     Timestamp oldest_timestamp_;
-
+    std::mutex completed_batches_lock_;
+    vector<Batch*> completed_batches_;
     std::shared_ptr<spdlog::logger> logger_;
 
     std::mutex *pipeline_lock_;
@@ -213,6 +104,8 @@ class Pipeline {
 
     virtual void reportThreadStatus() = 0;
 
+    virtual size_t getCompletedBatchesSize() = 0;
+    virtual void clearCompletedBatches() = 0;
     void reportMRR();
 };
 
@@ -247,6 +140,16 @@ class PipelineCPU : public Pipeline {
     void reportQueueStatus() override;
 
     void reportThreadStatus() override;
+
+    size_t getCompletedBatchesSize() override {
+      std::lock_guard<std::mutex> guard(completed_batches_lock_);
+      return completed_batches_.size();
+    }
+
+    void clearCompletedBatches() override {
+      std::lock_guard<std::mutex> guard(completed_batches_lock_);
+      completed_batches_.clear();
+    }
 };
 
 class PipelineGPU : public Pipeline {
@@ -280,6 +183,16 @@ class PipelineGPU : public Pipeline {
     void reportQueueStatus() override;
 
     void reportThreadStatus() override;
+
+    size_t getCompletedBatchesSize() override {
+      std::lock_guard<std::mutex> guard(completed_batches_lock_);
+      return completed_batches_.size();
+    }
+    
+    void clearCompletedBatches() override {
+      std::lock_guard<std::mutex> guard(completed_batches_lock_);
+      completed_batches_.clear();
+    }
 };
 
 class PipelineMonitor {

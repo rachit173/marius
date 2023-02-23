@@ -123,6 +123,7 @@ class PartitionBufferStorage : public Storage {
 
     void shuffle() override;
 
+    // TODO(scaling): need to update index Read method
     torch::Tensor indexRead(int partition_id, Indices indices, int64_t access_id);
 
     void indexAdd(int partition_id, Indices indices, torch::Tensor values);
@@ -143,6 +144,10 @@ class PartitionBufferStorage : public Storage {
 
     void setOrdering(vector<Batch *> batches) {
         buffer_->setOrdering(batches);
+    }
+
+    PartitionBuffer* getPartitionBuffer() {
+        return buffer_;
     }
 
     int64_t getHits() {

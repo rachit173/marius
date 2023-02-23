@@ -7,7 +7,11 @@
 
 #include "batch.h"
 #include "datatypes.h"
+#include "channel.h"
 
+// TODO(scaling)
+// 1. Serialize/Deserialize for transport over network.
+// 2. Worker should be able to update the data_ptr_ and/or tensor_ by fetching from remote workers.
 class Partition {
 public:
     std::mutex *lock_;                                              /**< Mutex lock to prevent race conditions */
@@ -42,6 +46,12 @@ public:
 
     torch::Tensor indexRead(Indices indices);
 
+    /////////////////////////// Scaling ///////////////////////////////////
+    torch::Tensor ConvertMetaDataToTensor();
+
+    torch::Tensor ConvertDataToTensor();
+
+    static std::unique_ptr<Partition> ConvertToPartition(const torch::Tensor &tensor);
 };
 
 class PartitionedFile {
@@ -140,6 +150,7 @@ class PartitionBuffer {
     torch::Tensor buffer_tensor_view_;
     std::vector<Partition *> partition_table_;
     std::queue<int> free_list_;
+    Queue<Partition *> *evict_partitions_;
 
     bool prefetching_;
     LookaheadBlock *lookahead_block_;
@@ -205,6 +216,8 @@ class PartitionBuffer {
 
     std::tuple<std::vector<int>, torch::Tensor> bufferIndexRead(torch::Tensor indices);
 
+    void addPartitionForEviction(int partition_id);
+
     int64_t getHits() {
         return hits_;
     }
@@ -228,6 +241,38 @@ class PartitionBuffer {
     int64_t getBufferEmbeddingsCapacity() {
         return capacity_ * partition_size_;
     }
+    std::vector<Partition *>& getPartitionTable() {
+        return partition_table_;
+    }
+    PartitionedFile* getPartitionedFile(){
+        return partitioned_file_;
+    }
+
+    int64_t getPartitionSize(){
+        return partition_size_;
+    }
+
+    int getDtypeSize(){
+        return dtype_size_;
+    }
+
+    torch::Dtype getDtype(){
+        return dtype_;
+    }
+
+    int getEmbeddingSize(){
+      return embedding_size_;
+    }
+
+    bool getLoaded(){
+      return loaded_;
+    }
+
+    std::mutex& getAdmitLock(){
+      return admit_lock_;
+    }
+
+    void admitWithLock(Partition* partition);
 
     // Get Evictions
     std::vector<Batch *> shuffleBeforeEvictions(std::vector<Batch *> batches);

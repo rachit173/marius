@@ -11,10 +11,10 @@
 #include <functional>
 #include <future>
 #include <shared_mutex>
+#include <memory>
 
 #include "config.h"
 #include "logger.h"
-
 
 Partition::Partition(int partition_id, int64_t partition_size, int embedding_size, torch::Dtype dtype, int64_t idx_offset, int64_t file_offset) {
 
@@ -90,6 +90,30 @@ torch::Tensor Partition::indexRead(Indices indices) {
     return ret;
 }
 
+torch::Tensor Partition::ConvertMetaDataToTensor() {
+	int64_t serialize_part[] = { partition_id_, partition_size_, embedding_size_, idx_offset_, file_offset_};
+	auto options = torch::TensorOptions().dtype(torch::kInt64);
+	torch::Tensor serialized = torch::from_blob(serialize_part, {1, 5}, options).clone();
+	return serialized;
+}
+
+torch::Tensor Partition::ConvertDataToTensor() {
+    if(this->data_ptr_ == nullptr){
+        throw std::runtime_error("Partition::ConvertDataToTensor data_ptr_ is null");
+    }
+	torch::Tensor serialized_data = torch::from_blob(data_ptr_, {partition_size_, embedding_size_}, dtype_);
+	return serialized_data;
+}
+
+std::unique_ptr<Partition> Partition::ConvertToPartition(const torch::Tensor &tensor) {
+	int64_t partition_id = tensor.data_ptr<int64_t>()[0];
+	int64_t partition_size = tensor.data_ptr<int64_t>()[1];
+	int64_t embedding_size = tensor.data_ptr<int64_t>()[2];
+	int64_t idx_offset = tensor.data_ptr<int64_t>()[3];
+	int64_t file_offset = tensor.data_ptr<int64_t>()[4];
+	return std::unique_ptr<Partition>(new Partition(partition_id, partition_size, embedding_size, torch::kFloat32, idx_offset, file_offset));
+}
+
 PartitionedFile::PartitionedFile(string filename, int num_partitions, int64_t partition_size, int embedding_size, int64_t total_embeddings, torch::Dtype dtype) {
     num_partitions_ = num_partitions;
     partition_size_ = partition_size;
@@ -128,6 +152,9 @@ void PartitionedFile::readPartition(void* addr, Partition *partition) {
     partition->tensor_ = torch::from_blob(addr, {partition->partition_size_, embedding_size_}, dtype_);
 }
 
+// TODO(scaling): Incase the partition has been evicted from the buffer
+// i.e. partition->data_ptr_ == nullptr, the partition can be read from fd_ and still be transferred
+// over network.
 void PartitionedFile::writePartition(Partition *partition, bool clear_mem) {
     if (pwrite(fd_, partition->data_ptr_, partition->total_size_, partition->file_offset_) == -1) {
         SPDLOG_ERROR("Unable to write Block: {}\nError: {}", partition->partition_id_, errno);
@@ -324,6 +351,8 @@ PartitionBuffer::PartitionBuffer(int capacity, int num_partitions, int64_t parti
         dtype_size_ = 4;
     }
 
+    evict_partitions_ = new Queue<Partition *>(10); // TODO: Change size to some appropriate value
+
     embedding_size_ = embedding_size;
     total_embeddings_ = total_embeddings;
     filename_ = filename;
@@ -449,39 +478,60 @@ torch::Tensor PartitionBuffer::filterEvictedNegatives(std::vector<int> previous_
 }
 
 void PartitionBuffer::waitRead(int64_t access_id) {
-    std::unique_lock access_lock(access_lock_);
-    access_cv_.wait(access_lock, [this, access_id] { return access_id <= *admit_access_ids_itr_; });
-    access_lock.unlock();
-    access_cv_.notify_all();
+    if (marius_options.storage.prefetching || marius_options.communication.prefix=="") {
+        std::unique_lock access_lock(access_lock_);
+        access_cv_.wait(access_lock, [this, access_id] { return access_id <= *admit_access_ids_itr_; });
+        access_lock.unlock();
+        access_cv_.notify_all();
+    }
 }
 
 void PartitionBuffer::waitAdmit(int64_t access_id) {
-    std::unique_lock access_lock(access_lock_);
-    access_cv_.wait(access_lock, [this, access_id] { return (access_id == *admit_access_ids_itr_) && (accesses_before_admit_ == 0); });
-    access_lock.unlock();
-    access_cv_.notify_all();
+    if (marius_options.storage.prefetching || marius_options.communication.prefix=="") {
+        std::unique_lock access_lock(access_lock_);
+        access_cv_.wait(access_lock, [this, access_id] { return (access_id == *admit_access_ids_itr_) && (accesses_before_admit_ == 0); });
+        access_lock.unlock();
+        access_cv_.notify_all();
+    }
 }
 
 void PartitionBuffer::admitIfNotPresent(int64_t access_id, Partition *partition) {
     waitRead(access_id);
     assert(loaded_);
+    SPDLOG_TRACE("AdmitIfNotPresent called for partition {}", partition->partition_id_);
     if (!partition->checkPresentAndIncrementUsage()) {
         waitAdmit(access_id);
         if (!partition->present_) {
+            SPDLOG_TRACE("Admit called for partition {}", partition->partition_id_);
             admit_lock_.lock();
             admit(partition);
             admit_lock_.unlock();
         }
     }
-    access_lock_.lock();
-    accesses_before_admit_--;
-    if (access_id % 2 == 0 && ordering_[access_id] == ordering_[access_id + 1]) {
+    if (marius_options.storage.prefetching || marius_options.communication.prefix=="") {
+        access_lock_.lock();
         accesses_before_admit_--;
+        if (access_id % 2 == 0 && ordering_[access_id] == ordering_[access_id + 1]) {
+            accesses_before_admit_--;
+        }
+        access_lock_.unlock();
+        access_cv_.notify_all();
     }
-    access_lock_.unlock();
-    access_cv_.notify_all();
 }
 
+void PartitionBuffer::admitWithLock(Partition* partition){
+    if(partition->present_) {
+        SPDLOG_WARN("AdmitWithLock: Partition {} already present in buffer", partition->partition_id_);
+        return;
+    }
+    SPDLOG_TRACE("Admit called for partition {}", partition->partition_id_);
+    admit_lock_.lock();
+    admit(partition);
+    admit_lock_.unlock();
+}
+
+// TODO(scaling): The communication method should have access to the partition_table_
+// to be able update the partition buffer.
 // indices a relative to the global embedding structure
 torch::Tensor PartitionBuffer::indexRead(int partition_id, torch::Tensor indices, int64_t access_id) {
     Partition *partition = partition_table_[partition_id];
@@ -540,22 +590,43 @@ void PartitionBuffer::evict(Partition *partition) {
     free_list_.push(partition->buffer_idx_);
 }
 
+void PartitionBuffer::addPartitionForEviction(int partition_id) {
+    SPDLOG_TRACE("Adding partition {} to eviction queue", partition_id);
+    if (partition_table_[partition_id]->present_) {
+        // partition_table_[partition_id]->present_ = false;
+        SPDLOG_TRACE("Evict Partitions Queue size: {}", evict_partitions_->size());
+        evict_partitions_->blocking_push(partition_table_[partition_id]);
+    }
+    SPDLOG_TRACE("Added partition {} to eviction queue", partition_id);
+}
+
+// TODO(scaling): admit method is used to add a node partition 
+// to the partition buffer.
 void PartitionBuffer::admit(Partition *partition) {
     // assumes that the buffer has been locked but not the partition
     int64_t buffer_idx;
     SPDLOG_TRACE("Admitting {}", partition->partition_id_);
+    // TODO: We might evict something which is already present in the buffer. Optimize to avoid that!
     if (free_list_.empty()) {
-        Partition *partition_to_evict = partition_table_[*evict_ids_itr_++];
+        SPDLOG_TRACE("Waiting for evict partitions....");
+        Partition *partition_to_evict;
+        if(marius_options.communication.prefix == ""){
+            partition_to_evict = partition_table_[*evict_ids_itr_++];
+        } else {
+            partition_to_evict = std::get<1>(evict_partitions_->blocking_pop());
+        }
         SPDLOG_TRACE("Evicting {}", partition_to_evict->partition_id_);
         evict(partition_to_evict);
         size_--;
         SPDLOG_TRACE("Evicted {}", partition_to_evict->partition_id_);
     }
     buffer_idx = free_list_.front();
+    SPDLOG_TRACE("Buffer index {}", buffer_idx);
     free_list_.pop();
 
     void *buff_addr = (char *) buff_mem_ + (buffer_idx * partition_size_ * embedding_size_ * dtype_size_);
 
+    // TODO: Deal with prefetching
     if (marius_options.storage.prefetching) {
         Partition *next_partition = nullptr;
         if (admit_ids_itr_ != admit_ids_.end()) {
@@ -563,19 +634,24 @@ void PartitionBuffer::admit(Partition *partition) {
         }
         lookahead_block_->move_to_buffer(buff_addr, buffer_idx, next_partition);
     } else {
+        SPDLOG_TRACE("Acquiring Lock...");
         partition->lock_->lock();
+        SPDLOG_TRACE("Acquired partition Lock...");
         partitioned_file_->readPartition(buff_addr, partition);
         partition->present_ = true;
         partition->buffer_idx_ = buffer_idx;
         partition->lock_->unlock();
     }
 
+    SPDLOG_TRACE("Read partition and put to buffer");
     size_++;
-    access_lock_.lock();
-    accesses_before_admit_ = *(admit_access_ids_itr_ + 1) - *admit_access_ids_itr_;
-    admit_access_ids_itr_++;
-    access_lock_.unlock();
-    access_cv_.notify_all();
+    if (marius_options.storage.prefetching || marius_options.communication.prefix=="") {
+        access_lock_.lock();
+        accesses_before_admit_ = *(admit_access_ids_itr_ + 1) - *admit_access_ids_itr_;
+        admit_access_ids_itr_++;
+        access_lock_.unlock();
+        access_cv_.notify_all();
+    }
     SPDLOG_TRACE("Admitted {}", partition->partition_id_);
 }
 
@@ -677,6 +753,8 @@ std::vector<Batch *> PartitionBuffer::shuffleBeforeEvictions(std::vector<Batch *
     return batches;
 }
 
+// TODO(ajay): The setOrdering needs to be performed dynamically for the communication case.
+// similar to dataset we should create a separate set of data structures and methods for scaling case.
 void PartitionBuffer::setOrdering(std::vector<Batch *> batches) {
     ordering_.clear();
     evict_ids_.clear();
